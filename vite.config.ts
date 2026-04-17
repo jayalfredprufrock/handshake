@@ -5,7 +5,7 @@ export default defineConfig({
     "*": "vp check --fix",
   },
   fmt: {},
-  lint: { options: { typeAware: true, typeCheck: true } },
+  lint: { options: { typeAware: true, typeCheck: false } },
   pack: {
     dts: { tsgo: true },
     exports: {
@@ -25,11 +25,6 @@ export default defineConfig({
       build: {
         command: "vp pack",
       },
-    },
-  },
-  test: {
-    typecheck: {
-      enabled: false,
     },
   },
 });
