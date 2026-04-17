@@ -27,4 +27,9 @@ export default defineConfig({
       },
     },
   },
+  test: {
+    typecheck: {
+      enabled: false,
+    },
+  },
 });
