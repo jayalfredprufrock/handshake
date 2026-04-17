@@ -31,5 +31,7 @@
     "forceConsistentCasingInFileNames": true,
     "allowUnreachableCode": false,
     "useDefineForClassFields": true
-  }
+  },
+
+  "exclude": ["docs"]
 }
