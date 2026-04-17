@@ -1,0 +1,155 @@
+---
+title: Validation
+description: How Handshake validates and coerces request and response data.
+---
+
+Handshake validates all incoming request data and outgoing responses using [TypeBox](https://github.com/sinclairzx81/typebox) schemas. Each part of the request — path params, query params, and body — has its own validation pipeline tailored to its characteristics.
+
+## Path Parameters
+
+Path parameters arrive from the framework as strings. The params pipeline applies three steps:
+
+1. **Default** — applies any default values defined in the schema
+2. **Convert** — coerces string values to the target type (e.g. `"42"` → `42` for `Type.Number()`)
+3. **Assert** — validates the coerced values against the schema, throwing on failure
+
+Supported coercions:
+
+| Schema type      | Input     | Output            |
+| ---------------- | --------- | ----------------- |
+| `Type.Number()`  | `"42"`    | `42`              |
+| `Type.Integer()` | `"7"`     | `7`               |
+| `Type.Boolean()` | `"true"`  | `true`            |
+| `Type.String()`  | `"hello"` | `"hello"` (no-op) |
+
+If a value cannot be coerced (e.g. `"abc"` for `Type.Number()`), the server returns a **400** response:
+
+```json
+{
+  "error": "Invalid path parameters",
+  "details": [...]
+}
+```
+
+## Query Parameters
+
+Query parameters are also strings, but they have the added complexity of potentially being arrays (from repeated keys like `?tags=a&tags=b`).
+
+The query pipeline first **normalizes** the raw values, then applies the same Default → Convert → Assert steps as params.
+
+### Normalization
+
+Frameworks like Hono provide query values as `Record<string, string[]>` — every value is always an array. Handshake normalizes these based on the schema:
+
+- **Array schema** (`Type.Array(...)`) — the array of values is kept as-is
+- **Scalar schema** — if the array has exactly one element, it's unwrapped to a single value. If it has multiple elements, a **400** error is returned
+
+```ts
+query: Type.Object({
+  q: Type.String(), // scalar — ?q=hello → "hello"
+  tags: Type.Array(Type.String()), // array — ?tags=a&tags=b → ["a", "b"]
+});
+```
+
+A single value for an array parameter is automatically coerced into a one-element array:
+
+```
+?tags=solo → ["solo"]
+```
+
+### Coercion
+
+After normalization, the same type coercion as path params is applied. This means numeric and boolean query params are coerced from strings:
+
+```
+?page=2&limit=10&active=true → { page: 2, limit: 10, active: true }
+```
+
+Array items are also coerced individually:
+
+```
+?ids=1&ids=2&ids=3 → { ids: [1, 2, 3] }
+```
+
+Invalid or missing required query params return a **400** response:
+
+```json
+{
+  "error": "Invalid query parameters",
+  "details": [...]
+}
+```
+
+## Request Body
+
+Request bodies are assumed to be JSON objects. The body pipeline is intentionally strict:
+
+1. **Default** — applies any default values defined in the schema
+2. **Assert** — validates the value with `additionalProperties: false`
+
+There is no coercion step — values must already be the correct type (unlike params and query which arrive as strings). This strictness means:
+
+- **Missing required properties** → 400 error
+- **Extra properties not in the schema** → 400 error
+- **Wrong types** → 400 error
+
+```json
+{
+  "error": "Invalid request body",
+  "details": [...]
+}
+```
+
+Optional properties (defined with `Type.Optional()`) are allowed to be absent.
+
+## Response Validation
+
+Response validation ensures that handlers return data matching the contract. It runs a different pipeline than request validation:
+
+1. **Clean** — strips any properties not defined in the schema (silently, without error)
+2. **Assert** — validates that all remaining properties match the expected types
+
+This means:
+
+- Extra properties in the handler's return value are **silently removed** before sending
+- Wrong types or missing required properties produce a **500** error
+
+```json
+{
+  "error": "Response validation failed",
+  "details": [...]
+}
+```
+
+### Configuring Response Validation
+
+Response validation is enabled by default. It can be disabled globally when creating the adapter or per-handler when registering handlers.
+
+```ts
+// Disable globally
+const api = createHonoApp(contract, { validateResponse: false });
+
+// Disable for a specific handler
+api.handle("listUsers", () => [...users.values()], {
+  validateResponse: false,
+});
+```
+
+Per-handler settings override the global setting. This lets you enable validation globally but opt out of it for specific endpoints, or vice versa.
+
+### Why strip instead of reject?
+
+Request bodies reject extra properties because the client is sending data — extra fields may indicate a bug or a version mismatch that should be surfaced. Responses strip extra properties because the handler may return domain objects with internal fields that shouldn't leak to the client. Stripping is the safer default.
+
+## Error Response Shape
+
+All validation errors follow the same shape:
+
+```ts
+{
+  error: string; // Human-readable description
+  details: unknown; // TypeBox assertion error details
+}
+```
+
+Request validation errors (params, query, body) return status **400**. Response validation errors return status **500**.

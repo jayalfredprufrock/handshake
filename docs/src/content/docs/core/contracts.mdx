@@ -1,0 +1,160 @@
+---
+title: Contracts
+description: Define your API shape using makeContract and TypeBox schemas.
+---
+
+A contract is the single source of truth for your API. It defines every endpoint — its HTTP method, path, path parameters, query parameters, request body, and response shape. Both the server adapter and the client are derived from this contract.
+
+## Creating a Contract
+
+Use `makeContract` to define a contract. The first argument is an optional base path that prefixes all endpoint paths. The second argument is a record of endpoint definitions.
+
+```ts
+import { makeContract } from "@jayalfredprufrock/handshake/contract";
+import { Type } from "typebox";
+
+const contract = makeContract("/api", {
+  getUser: {
+    method: "GET",
+    path: "/users/:id",
+    params: Type.Object({ id: Type.String() }),
+    response: Type.Object({ id: Type.String(), name: Type.String() }),
+  },
+});
+```
+
+If you omit the base path, it defaults to `"/"`:
+
+```ts
+const contract = makeContract({
+  health: {
+    method: "GET",
+    path: "/health",
+    response: Type.Object({ ok: Type.Boolean() }),
+  },
+});
+```
+
+## Endpoint Definition
+
+Each endpoint in a contract is defined as an object with the following fields:
+
+### `method`
+
+**Required.** The HTTP method. Must be one of `"GET"`, `"POST"`, `"PATCH"`, or `"DELETE"`.
+
+```ts
+method: "GET";
+```
+
+### `path`
+
+**Required.** The URL path for this endpoint, relative to the contract's base path. Path parameters use the `:param` syntax.
+
+```ts
+path: "/users/:id";
+```
+
+### `response`
+
+**Required.** A TypeBox schema describing the response body. This is used for both TypeScript type inference and runtime response validation.
+
+```ts
+response: Type.Object({
+  id: Type.String(),
+  name: Type.String(),
+});
+```
+
+### `params`
+
+**Optional.** A TypeBox schema describing the path parameters. Should be a `Type.Object()` where each key corresponds to a `:param` segment in the path. On the server, string values from the URL are automatically coerced to match the schema types (e.g. `"42"` becomes `42` for `Type.Number()`).
+
+```ts
+params: Type.Object({ id: Type.Number() });
+```
+
+### `body`
+
+**Optional.** A TypeBox schema describing the JSON request body. Typically used with `POST` and `PATCH` methods. On the server, the body is validated strictly — missing or extra properties produce a 400 error.
+
+```ts
+body: Type.Object({
+  name: Type.String(),
+  email: Type.String(),
+});
+```
+
+### `query`
+
+**Optional.** A TypeBox schema describing query string parameters. Like path params, string values are coerced to match schema types. Array schemas support repeated query keys (e.g. `?tags=a&tags=b`).
+
+```ts
+query: Type.Object({
+  page: Type.Number(),
+  limit: Type.Number(),
+  tags: Type.Array(Type.String()),
+});
+```
+
+### `description`
+
+**Optional.** A human-readable description of the endpoint. Useful for documentation generation.
+
+```ts
+description: "Retrieve a user by their ID";
+```
+
+### `meta`
+
+**Optional.** An arbitrary metadata object that can be attached to the endpoint. This can be used to store custom information such as authentication requirements or rate limiting configuration.
+
+```ts
+meta: { auth: "required", rateLimit: 100 }
+```
+
+## Splitting Contracts Across Files
+
+For larger APIs, you can define endpoints in separate files and combine them:
+
+```ts
+// users.ts
+export const userEndpoints = {
+  getUser: {
+    method: "GET" as const,
+    path: "/users/:id",
+    params: Type.Object({ id: Type.String() }),
+    response: Type.Object({ id: Type.String(), name: Type.String() }),
+  },
+  listUsers: {
+    method: "GET" as const,
+    path: "/users",
+    response: Type.Array(Type.Object({ id: Type.String(), name: Type.String() })),
+  },
+};
+```
+
+```ts
+// contract.ts
+import { makeContract } from "@jayalfredprufrock/handshake/contract";
+import { userEndpoints } from "./users";
+import { postEndpoints } from "./posts";
+
+export const contract = makeContract("/api", {
+  ...userEndpoints,
+  ...postEndpoints,
+});
+```
+
+## The `ContractDef` Type
+
+The `makeContract` function returns a `ContractDef<C>` object:
+
+```ts
+interface ContractDef<C extends Record<string, Endpoint>> {
+  basePath: string;
+  endpoints: C;
+}
+```
+
+The full endpoint type information is preserved in the generic parameter `C`, which is what enables type-safe handlers and client methods downstream.

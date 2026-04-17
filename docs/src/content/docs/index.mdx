@@ -1,0 +1,80 @@
+---
+title: Handshake
+description: Contract-first API development for TypeScript. Define your API once, get a typed server and client automatically.
+template: splash
+sidebar:
+  hidden: true
+hero:
+  tagline: Define your API as a contract. Get a fully-typed HTTP client and validated server handlers — no code generation required.
+  image:
+    file: ../../assets/handshake-logo.png
+  actions:
+    - text: Get Started
+      link: /handshake/quickstart/
+      icon: right-arrow
+      variant: primary
+    - text: View on GitHub
+      link: https://github.com/jayalfredprufrock/handshake
+      icon: external
+---
+
+import { Card, CardGrid } from "@astrojs/starlight/components";
+
+## What is Handshake?
+
+Handshake is a contract-first API library for TypeScript. You define your endpoints once using [TypeBox](https://github.com/sinclairzx81/typebox) schemas, then use that contract to create type-safe server handlers and HTTP clients. Both sides stay in sync through TypeScript's type system — no code generation or compile step needed.
+
+<CardGrid>
+  <Card title="Contract-first" icon="document">
+    Define your API shape in one place: routes, methods, params, bodies, and responses. The contract
+    is the single source of truth.
+  </Card>
+  <Card title="Type-safe servers" icon="setting">
+    Server adapters bind contracts to your framework with automatic request validation, type
+    coercion, and response stripping.
+  </Card>
+  <Card title="Type-safe clients" icon="rocket">
+    Generate fully-typed HTTP clients directly from the contract. Every endpoint becomes a typed
+    method — `api.getUser({id})` just works.
+  </Card>
+  <Card title="Runtime validation" icon="approve-check">
+    Path params, query params, and request bodies are validated and coerced automatically. Responses
+    are validated and stripped of unknown properties.
+  </Card>
+</CardGrid>
+
+## Quick Example
+
+```ts
+import { makeContract } from "@jayalfredprufrock/handshake/contract";
+import { Type } from "typebox";
+
+// Define once
+const contract = makeContract("/api", {
+  getUser: {
+    method: "GET",
+    path: "/users/:id",
+    params: Type.Object({ id: Type.String() }),
+    response: Type.Object({ id: Type.String(), name: Type.String() }),
+  },
+});
+```
+
+```ts
+// Server — fully typed handlers
+import { createHonoApp } from "@jayalfredprufrock/handshake/hono";
+
+const api = createHonoApp(contract);
+api.handle("getUser", ({ params }) => {
+  // params.id is typed as string
+  return { id: params.id, name: "Alice" };
+});
+```
+
+```ts
+// Client — fully typed methods
+import { createFetchClient } from "@jayalfredprufrock/handshake/client";
+
+const api = createFetchClient(contract, { baseUrl: "http://localhost:3000", fetch });
+const user = await api.getUser({ id: "1" }); // { id: string, name: string }
+```

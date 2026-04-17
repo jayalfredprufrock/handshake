@@ -1,0 +1,115 @@
+---
+title: Type Helpers
+description: Utility types for extracting TypeScript types from contracts and endpoints.
+---
+
+Handshake exports several utility types that let you extract TypeScript types from your contracts and endpoints. These are useful when you need to type things outside of the client or server — for example, typing React component props based on a response schema, or building custom middleware.
+
+## `InferSchema<S>`
+
+Converts a TypeBox schema type to its corresponding TypeScript type. This is a convenience wrapper around TypeBox's `Static<T>`.
+
+```ts
+import { Type } from "typebox";
+import type { InferSchema } from "@jayalfredprufrock/handshake/contract";
+
+const UserSchema = Type.Object({
+  id: Type.String(),
+  name: Type.String(),
+});
+
+type User = InferSchema<typeof UserSchema>;
+// { id: string; name: string }
+```
+
+If the input is not a `TSchema`, it resolves to `any`.
+
+## `StaticEndpoint<E>`
+
+Extracts all the resolved TypeScript types from an endpoint definition.
+
+```ts
+import type { StaticEndpoint } from "@jayalfredprufrock/handshake/client";
+
+type GetUser = StaticEndpoint<typeof contract.endpoints.getUser>;
+// {
+//   method: "GET";
+//   path: "/users/:id";
+//   response: { id: string; name: string };
+//   params: { id: string };
+//   body: any;
+//   query: any;
+// }
+```
+
+You can then pick individual fields:
+
+```ts
+type UserResponse = StaticEndpoint<typeof contract.endpoints.getUser>["response"];
+// { id: string; name: string }
+
+type UserParams = StaticEndpoint<typeof contract.endpoints.getUser>["params"];
+// { id: string }
+```
+
+## `StaticApi<C, E>`
+
+A shorthand for `StaticEndpoint` that works with the full contract endpoints record and an endpoint name:
+
+```ts
+import type { StaticApi } from "@jayalfredprufrock/handshake/client";
+
+type GetUser = StaticApi<typeof contract.endpoints, "getUser">;
+// Same as StaticEndpoint<typeof contract.endpoints.getUser>
+```
+
+## `BaseHandlerInput<E>`
+
+The framework-agnostic portion of a handler's input. This is the intersection of `params`, `body`, and `query` types (each conditional on whether the endpoint defines them).
+
+```ts
+import type { BaseHandlerInput } from "@jayalfredprufrock/handshake/server";
+
+type GetUserInput = BaseHandlerInput<typeof contract.endpoints.getUser>;
+// { params: { id: string } }
+
+type CreateUserInput = BaseHandlerInput<typeof contract.endpoints.createUser>;
+// { body: { name: string; email: string } }
+```
+
+This is useful for typing shared business logic that processes handler inputs independently of any framework.
+
+## `ClientEndpoint<E>`
+
+The function signature for a client method, derived from the endpoint definition. The argument order adapts based on what the endpoint defines:
+
+```ts
+import type { ClientEndpoint } from "@jayalfredprufrock/handshake/client";
+
+// Endpoint with params only
+type GetUser = ClientEndpoint<typeof contract.endpoints.getUser>;
+// (params: { id: string }, options?: ClientOptions) => Promise<{ id: string; name: string }>
+
+// Endpoint with params and body
+type UpdateUser = ClientEndpoint<typeof contract.endpoints.updateUser>;
+// (params: { id: string }, body: { name?: string }, options?: ClientOptions) => Promise<...>
+
+// Endpoint with body only
+type CreateUser = ClientEndpoint<typeof contract.endpoints.createUser>;
+// (body: { name: string; email: string }, options?: ClientOptions) => Promise<...>
+
+// Endpoint with neither
+type ListUsers = ClientEndpoint<typeof contract.endpoints.listUsers>;
+// (options?: ClientOptions) => Promise<...>
+```
+
+## `ClientOptions<E>`
+
+The options type for a client method call. Includes optional `query` (typed from the endpoint's query schema) and `request` (passthrough `RequestInit` fields).
+
+```ts
+import type { ClientOptions } from "@jayalfredprufrock/handshake/client";
+
+type ListOptions = ClientOptions<typeof contract.endpoints.listUsers>;
+// { query?: { limit?: string }; request?: Omit<RequestInit, "method" | "body"> }
+```

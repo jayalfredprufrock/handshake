@@ -1,25 +1,12 @@
 <p align="center">
   <img src="handshake-logo.png" alt="Handshake" width="200" />
 </p>
-
-<h1 align="center">Handshake</h1>
-
 <p align="center">
   <a href="https://www.npmjs.com/package/@jayalfredprufrock/handshake"><img src="https://img.shields.io/npm/v/@jayalfredprufrock/handshake.svg" alt="npm version" /></a>
   <a href="https://github.com/jayalfredprufrock/handshake/blob/main/LICENSE"><img src="https://img.shields.io/npm/l/@jayalfredprufrock/handshake.svg" alt="license" /></a>
 </p>
 
-<p align="center">
-  Describe your backend API as a contract and get a fully-typed HTTP client — no code generation or compile step required.
-</p>
-
----
-
-Handshake is a contract-first API library for TypeScript. You define your endpoints once using [TypeBox](https://github.com/sinclairzx81/typebox) schemas, then use that contract to create type-safe server handlers and HTTP clients. Both sides stay in sync automatically through TypeScript's type system.
-
-- **Contracts** define your API shape: routes, methods, params, bodies, and responses.
-- **Server adapters** bind contracts to your framework ([Hono](https://hono.dev) today, more coming) with automatic request validation and response stripping.
-- **Clients** get fully-typed methods derived from the contract — call `api.getUser({ id })` and get back a typed response.
+Tired of managing API schemas in multiple places? With handshake, you define your API contract once using [TypeBox](https://github.com/sinclairzx81/typebox) schemas. Server adapters then consume those contracts, automatically providing strongly-typed and validated request and response objects. Consumers get a fully-typed HTTP client without a compile step.
 
 ## Installation
 
@@ -184,3 +171,7 @@ Method signatures adapt to the endpoint definition — endpoints with path param
 ## License
 
 MIT
+
+## TODO
+
+1. Investigate pnpm catalog system. Remove unnecessary vite catalogs if possible (since we'll manage vite stuff at the monorepo root). But consider using catalogs to keep typebox version in sync across the monorepo.

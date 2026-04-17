@@ -1,6 +1,7 @@
 import {
   type Static,
   type TArray,
+  type TKeysToIndexer,
   type TOmit,
   type TPartial,
   type TPick,
@@ -18,8 +19,13 @@ export type Merge2<A, B> = A extends string[]
 
 export type Merge3<A, B, C> = Merge2<Merge2<A, B>, C>;
 
-export type TryPick<T extends TSchema, P> = P extends PropertyKey[] ? TPick<T, P> : T;
-export type TryOmit<T extends TSchema, O> = O extends PropertyKey[] ? TOmit<T, O> : T;
+export type TryPick<T extends TSchema, P> = P extends PropertyKey[]
+  ? TPick<T, TKeysToIndexer<P>>
+  : T;
+
+export type TryOmit<T extends TSchema, O> = O extends PropertyKey[]
+  ? TOmit<T, TKeysToIndexer<O>>
+  : T;
 
 export type MakePath<B extends string, P> = P extends [infer P1, ...infer R]
   ? P1 extends string
@@ -31,7 +37,7 @@ export type AllKeys<T> = Extract<T extends any ? keyof T : never, string>;
 
 export interface CrudContractConfig<S> {
   basePath: string;
-  params: (keyof S)[];
+  params: AllKeys<S>[];
   hidden?: AllKeys<S>[];
   readonly?: AllKeys<S>[];
   immutable?: AllKeys<S>[];
@@ -53,7 +59,7 @@ export type CrudContract<T extends TSchema, C extends CrudContractConfig<Static<
   create: {
     method: "POST";
     path: C["basePath"];
-    body: TOmit<T, Merge2<C["hidden"], C["readonly"]>>;
+    body: TryOmit<T, Merge2<C["hidden"], C["readonly"]>>;
     response: TryOmit<T, C["hidden"]>;
   };
   update: {

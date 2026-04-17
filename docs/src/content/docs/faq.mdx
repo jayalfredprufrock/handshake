@@ -1,0 +1,40 @@
+---
+title: FAQ
+description: Frequently asked questions about Handshake.
+---
+
+## Why TypeBox instead of Zod?
+
+[TypeBox](https://github.com/sinclairzx81/typebox) produces standard JSON Schema, which makes it straightforward to generate OpenAPI specs, validate data across languages, and integrate with existing JSON Schema tooling. It's also one of the fastest validation libraries for TypeScript, with no dependencies.
+
+That said, if there's demand for other schema libraries, Handshake's architecture doesn't preclude supporting them in the future.
+
+## How does this compare to tRPC?
+
+tRPC uses a procedure-based RPC model — you define functions on the server and call them on the client through a custom protocol. It's excellent for full-stack TypeScript apps where both sides live in the same repo.
+
+Handshake takes a different approach: it works with standard HTTP methods and paths. Your API is a regular REST API that any HTTP client can consume. The contract adds type safety and validation on top, but the underlying transport is plain HTTP. This makes Handshake a better fit when you need your API to be consumed by non-TypeScript clients, third parties, or when you want to generate OpenAPI documentation.
+
+## How does this compare to ts-rest?
+
+Both Handshake and [ts-rest](https://ts-rest.com) are contract-first libraries for TypeScript APIs. The main differences:
+
+- **Schema library**: ts-rest supports Zod, Valibot, and Arktype. Handshake uses TypeBox exclusively (for now), which produces standard JSON Schema.
+- **Server adapters**: ts-rest supports Express, Fastify, NestJS, and Next.js. Handshake currently supports Hono, with more adapters planned.
+- **Validation approach**: Handshake has distinct validation pipelines per input type — params and query get type coercion, bodies reject extra properties strictly, and responses strip unknown fields by default.
+
+## Can I use Handshake without a server adapter?
+
+Yes. The contract and client packages are independent of any server framework. You can define a contract and use `createFetchClient` to consume any existing REST API that conforms to the contract's shape. The server adapter is optional.
+
+## Can I generate OpenAPI from a contract?
+
+Not yet, but this is a planned feature. Since Handshake contracts use TypeBox (which produces JSON Schema), generating OpenAPI specs is a natural fit.
+
+## What server frameworks will be supported?
+
+Hono is the first supported framework. Support for additional frameworks like NestJS, Express, and Fastify is planned.
+
+## Does Handshake work in the browser?
+
+The contract and client packages work in any JavaScript environment — browser, Node.js, Deno, Bun, or edge runtimes. The server adapter is only needed on the server side.

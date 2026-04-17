@@ -1,0 +1,177 @@
+---
+title: Fetch Client
+description: Create a fully-typed HTTP client from a contract.
+---
+
+The fetch client generates typed methods for every endpoint in a contract. No code generation or compile step — just TypeScript inference.
+
+## Basic Usage
+
+```ts
+import { createFetchClient } from "@jayalfredprufrock/handshake/client";
+import { contract } from "./contract";
+
+const api = createFetchClient(contract, {
+  baseUrl: "http://localhost:3000",
+  async fetch(url, init) {
+    const res = await fetch(url, {
+      ...init,
+      headers: { "content-type": "application/json" },
+      body: init?.body ? JSON.stringify(init.body) : undefined,
+    });
+    return res.json();
+  },
+});
+```
+
+Each endpoint becomes a method on the returned client object:
+
+```ts
+const users = await api.listUsers();
+const user = await api.getUser({ id: "1" });
+const created = await api.createUser({ name: "Alice", email: "alice@example.com" });
+await api.deleteUser({ id: "1" });
+```
+
+## `createFetchClient(contract, config)`
+
+### Config
+
+```ts
+interface FetchClientConfig {
+  fetch: FetchFn;
+  baseUrl: string;
+}
+```
+
+#### `baseUrl`
+
+The base URL of the API server. Combined with the contract's base path and the endpoint path to form the full URL.
+
+```ts
+// Contract basePath: "/api", endpoint path: "/users/:id"
+// baseUrl: "http://localhost:3000"
+// → GET http://localhost:3000/api/users/1
+```
+
+#### `fetch`
+
+A function that performs the HTTP request and returns the parsed response. This is where you control serialization, headers, authentication, and error handling.
+
+```ts
+type FetchFn = (
+  input: string | URL,
+  init?: Omit<RequestInit, "signal"> & { signal?: IsomorphicSignal },
+) => Promise<unknown>;
+```
+
+The `fetch` function receives:
+
+- `input` — the fully constructed URL (including base URL, base path, endpoint path, and query string)
+- `init` — request options including `method` and `body` (as the raw value from the caller, not yet serialized)
+
+You are responsible for serializing the body and parsing the response. This gives you full control over the request lifecycle:
+
+```ts
+async fetch(url, init) {
+  const res = await fetch(url, {
+    ...init,
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${getToken()}`,
+    },
+    body: init?.body ? JSON.stringify(init.body) : undefined,
+  });
+
+  if (!res.ok) {
+    throw new Error(`API error: ${res.status}`);
+  }
+
+  return res.json();
+}
+```
+
+## Method Signatures
+
+The generated method signature adapts based on what the endpoint defines:
+
+### Params + Body
+
+```ts
+// contract: { method: "PATCH", params: ..., body: ... }
+api.updateUser(params, body, options?)
+```
+
+### Params only
+
+```ts
+// contract: { method: "GET", params: ... }
+api.getUser(params, options?)
+```
+
+### Body only
+
+```ts
+// contract: { method: "POST", body: ... }
+api.createUser(body, options?)
+```
+
+### Neither
+
+```ts
+// contract: { method: "GET" }
+api.listUsers(options?)
+```
+
+The options argument is always last and always optional.
+
+## Client Options
+
+Every method accepts an optional `ClientOptions` object as its final argument:
+
+```ts
+interface ClientOptions<E extends Endpoint> {
+  query?: InferSchema<E["query"]>;
+  request?: Omit<RequestInit, "method" | "body">;
+}
+```
+
+### `query`
+
+Query parameters to include in the URL. Typed from the endpoint's `query` schema. Array values are serialized as repeated keys.
+
+```ts
+const results = await api.search({
+  query: {
+    q: "hello",
+    page: 2,
+    tags: ["typescript", "api"],
+  },
+});
+// → GET /search?q=hello&page=2&tags=typescript&tags=api
+```
+
+### `request`
+
+Additional `RequestInit` fields passed through to the `fetch` function. Useful for per-request headers, abort signals, etc.
+
+```ts
+const controller = new AbortController();
+
+const users = await api.listUsers({
+  request: {
+    signal: controller.signal,
+    headers: { "x-request-id": "abc123" },
+  },
+});
+```
+
+## Endpoint Metadata
+
+Each method on the client also exposes the original endpoint definition. This can be useful for introspection or building generic utilities:
+
+```ts
+api.getUser.method; // "GET"
+api.getUser.path; // "/users/:id"
+api.getUser.meta; // { auth: "required" } (if defined)
+```

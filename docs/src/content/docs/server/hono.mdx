@@ -1,0 +1,189 @@
+---
+title: Hono
+description: Server adapter for Hono — bind contracts to typed, validated handlers.
+---
+
+The Hono adapter creates a fully-typed Hono application from a contract. It handles request parsing, validation, and response serialization automatically.
+
+## Installation
+
+```sh
+npm install @jayalfredprufrock/handshake hono typebox
+```
+
+## Basic Usage
+
+```ts
+import { createHonoApp } from "@jayalfredprufrock/handshake/hono";
+import { contract } from "./contract";
+
+const api = createHonoApp(contract);
+
+api.handle("getUser", ({ params }) => {
+  return { id: params.id, name: "Alice" };
+});
+
+api.handle("listUsers", () => []);
+
+const app = api.build();
+```
+
+## `createHonoApp(contract, options?)`
+
+Creates a `HandshakeApp` that wraps a Hono application.
+
+### Options
+
+```ts
+interface CreateHonoAppOptions {
+  app?: Hono;
+  basePath?: string;
+  validateResponse?: boolean;
+}
+```
+
+#### `app`
+
+An existing Hono instance to register routes on. If omitted, a new `Hono()` is created. Use this when you need to add middleware or custom routes alongside the contract routes.
+
+```ts
+import { Hono } from "hono";
+import { logger } from "hono/logger";
+
+const hono = new Hono();
+hono.use("*", logger());
+hono.get("/health", (c) => c.json({ ok: true }));
+
+const api = createHonoApp(contract, { app: hono });
+```
+
+#### `basePath`
+
+Override the contract's base path. Useful when the same contract is served at a different prefix (e.g. versioned APIs).
+
+```ts
+const api = createHonoApp(contract, { basePath: "/v2" });
+```
+
+#### `validateResponse`
+
+Enable or disable [response validation](/handshake/core/validation/#response-validation) globally. Defaults to `true`. Can be overridden per-handler.
+
+```ts
+const api = createHonoApp(contract, { validateResponse: false });
+```
+
+## `handle(name, handler, options?)`
+
+Register a handler for an endpoint. The handler receives a typed input object and must return the response type defined in the contract (or a raw `Response`).
+
+```ts
+api.handle("getUser", ({ params }) => {
+  return { id: params.id, name: "Alice" };
+});
+```
+
+### Handler Input
+
+The input object contains only the fields relevant to the endpoint:
+
+| Field    | Present when              | Type                  |
+| -------- | ------------------------- | --------------------- |
+| `params` | Endpoint defines `params` | `Static<E["params"]>` |
+| `body`   | Endpoint defines `body`   | `Static<E["body"]>`   |
+| `query`  | Endpoint defines `query`  | `Static<E["query"]>`  |
+| `c`      | Always                    | Hono `Context`        |
+
+The Hono `Context` object (`c`) is always available, giving you access to the full Hono API for cases that need it:
+
+```ts
+api.handle("getUser", ({ params, c }) => {
+  const authHeader = c.req.header("authorization");
+  // ...
+  return { id: params.id, name: "Alice" };
+});
+```
+
+### Return Values
+
+Handlers can return either:
+
+- **A plain value** matching the response schema — automatically serialized as JSON with `Content-Type: application/json`
+- **A `Response` object** — passed through as-is, bypassing response validation
+
+```ts
+api.handle("getUser", ({ params }) => {
+  const user = users.get(params.id);
+  if (!user) {
+    // Raw Response — full control over status, headers, body
+    return new Response(JSON.stringify({ error: "Not found" }), {
+      status: 404,
+      headers: { "content-type": "application/json" },
+    });
+  }
+  // Plain object — automatically wrapped as JSON
+  return user;
+});
+```
+
+### Handler Options
+
+```ts
+interface HandlerOptions {
+  validateResponse?: boolean;
+}
+```
+
+Per-handler response validation override. Takes precedence over the global setting:
+
+```ts
+// Global validation is on, but skip it for this expensive endpoint
+api.handle("listUsers", () => [...users.values()], {
+  validateResponse: false,
+});
+```
+
+## `build()`
+
+Finalizes the application by registering all routes on the Hono instance and returns it.
+
+```ts
+const app = api.build();
+```
+
+`build()` throws if any endpoint in the contract does not have a registered handler:
+
+```
+Error: Missing handlers for endpoints: listUsers, deleteUser
+```
+
+This ensures the server always implements the full contract.
+
+### Running the App
+
+The returned `Hono` instance can be used with any Hono-compatible server:
+
+```ts
+import { serve } from "@hono/node-server";
+
+const app = api.build();
+serve({ fetch: app.fetch, port: 3000 });
+```
+
+## Type Safety
+
+The adapter enforces type safety at compile time:
+
+- Handler inputs are typed based on the endpoint definition — `params`, `body`, and `query` have the correct shapes
+- Handler return values must match the endpoint's `response` schema
+- The `name` argument to `handle()` only accepts valid endpoint names from the contract
+
+Returning an incorrect response type produces a TypeScript error:
+
+```ts
+api.handle("getUser", ({ params }) => {
+  return { id: 123, name: "Alice" };
+  //       ~~~~~~
+  // Type 'number' is not assignable to type 'string'
+});
+```

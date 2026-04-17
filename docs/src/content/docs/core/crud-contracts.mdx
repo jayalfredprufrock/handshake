@@ -1,0 +1,132 @@
+---
+title: CRUD Contracts
+description: Generate standard CRUD endpoints from a single TypeBox schema.
+---
+
+For common REST resources, `makeCrudContract` generates a full set of CRUD endpoints (`get`, `list`, `create`, `update`, `delete`) from a single TypeBox schema and a configuration object.
+
+## Basic Usage
+
+```ts
+import { makeCrudContract } from "@jayalfredprufrock/handshake/contract";
+import { Type } from "typebox";
+
+const User = Type.Object({
+  id: Type.String(),
+  name: Type.String(),
+  email: Type.String(),
+  role: Type.String(),
+  passwordHash: Type.String(),
+  createdAt: Type.String(),
+});
+
+const userEndpoints = makeCrudContract(User, {
+  basePath: "/users",
+  params: ["id"],
+});
+```
+
+This generates five endpoints:
+
+| Name     | Method   | Path         | Body                          | Response        |
+| -------- | -------- | ------------ | ----------------------------- | --------------- |
+| `get`    | `GET`    | `/users/:id` | —                             | Full schema     |
+| `list`   | `GET`    | `/users`     | —                             | Array of schema |
+| `create` | `POST`   | `/users`     | Full schema (minus params)    | Full schema     |
+| `update` | `PATCH`  | `/users/:id` | Partial schema (minus params) | Full schema     |
+| `delete` | `DELETE` | `/users/:id` | —                             | Full schema     |
+
+## Configuration
+
+The second argument to `makeCrudContract` is a configuration object:
+
+### `basePath`
+
+**Required.** The URL path for the collection. Individual resource paths are derived by appending the `params` as path segments.
+
+```ts
+basePath: "/users";
+// get/update/delete → /users/:id
+// list/create → /users
+```
+
+### `params`
+
+**Required.** An array of property keys from the schema that identify an individual resource. These become path parameters for `get`, `update`, and `delete`, and are excluded from the `create` body.
+
+```ts
+params: ["id"];
+// Path: /users/:id
+
+params: ["tenantId", "id"];
+// Path: /users/:tenantId/:id
+```
+
+### `hidden`
+
+**Optional.** Properties that should be excluded from all responses and from the `create`/`update` bodies. Useful for sensitive fields that should never leave the server.
+
+```ts
+hidden: ["passwordHash"];
+```
+
+### `readonly`
+
+**Optional.** Properties that appear in responses but cannot be set during `create` or `update`. Useful for server-generated fields.
+
+```ts
+readonly: ["createdAt"];
+```
+
+### `immutable`
+
+**Optional.** Properties that can be set during `create` but cannot be changed during `update`. They still appear in responses.
+
+```ts
+immutable: ["role"];
+```
+
+## Full Example
+
+```ts
+const userEndpoints = makeCrudContract(User, {
+  basePath: "/users",
+  params: ["id"],
+  hidden: ["passwordHash"],
+  readonly: ["id", "createdAt"],
+  immutable: ["email"],
+});
+```
+
+This produces:
+
+| Endpoint | Body fields                   | Response fields                            |
+| -------- | ----------------------------- | ------------------------------------------ |
+| `create` | `name`, `email`, `role`       | `id`, `name`, `email`, `role`, `createdAt` |
+| `update` | `name`, `role` (all optional) | `id`, `name`, `email`, `role`, `createdAt` |
+| `get`    | —                             | `id`, `name`, `email`, `role`, `createdAt` |
+| `list`   | —                             | Array of the above                         |
+| `delete` | —                             | `id`, `name`, `email`, `role`, `createdAt` |
+
+- `passwordHash` is excluded everywhere (`hidden`)
+- `id` and `createdAt` appear in responses but not in `create` or `update` bodies (`readonly`)
+- `email` appears in `create` but not in `update` (`immutable`)
+- `update` body fields are all optional (partial update semantics)
+
+## Using with `makeContract`
+
+The result of `makeCrudContract` is a plain object of endpoint definitions. You can spread it into a `makeContract` call alongside other endpoints:
+
+```ts
+import { makeContract, makeCrudContract } from "@jayalfredprufrock/handshake/contract";
+
+const contract = makeContract("/api", {
+  ...makeCrudContract(User, { basePath: "/users", params: ["id"] }),
+  ...makeCrudContract(Post, { basePath: "/posts", params: ["id"] }),
+  health: {
+    method: "GET",
+    path: "/health",
+    response: Type.Object({ ok: Type.Boolean() }),
+  },
+});
+```
