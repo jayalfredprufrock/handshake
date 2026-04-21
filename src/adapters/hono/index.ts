@@ -11,25 +11,26 @@ import {
   parseResponse,
 } from "../../server";
 import { Hono } from "hono";
-import type { Context } from "hono";
+import type { Context, Env } from "hono";
 
-type HandlerInput<E extends Endpoint> = BaseHandlerInput<E> & { c: Context };
+type HandlerInput<E extends Endpoint, HonoEnv extends Env> = BaseHandlerInput<E> & {
+  c: Context<HonoEnv>;
+};
 
-type Handler<E extends Endpoint> = (
-  input: HandlerInput<E>,
+type Handler<E extends Endpoint, HonoEnv extends Env> = (
+  input: HandlerInput<E, HonoEnv>,
 ) => InferSchema<E["response"]> | Response | Promise<InferSchema<E["response"]> | Response>;
 
-export interface HandshakeApp<C extends ContractDef> {
+export interface HandshakeApp<C extends ContractDef, HonoEnv extends Env = Env> {
   handle<K extends keyof C["endpoints"] & string>(
     name: K,
-    handler: Handler<C["endpoints"][K]>,
+    handler: Handler<C["endpoints"][K], HonoEnv>,
     options?: HandlerOptions,
   ): void;
-  build(): Hono;
+  build(): Hono<HonoEnv>;
 }
 
 export interface CreateHonoAppOptions {
-  app?: Hono;
   basePath?: string;
   validateResponse?: boolean;
 }
@@ -44,7 +45,21 @@ const methodMap = {
 export function createHonoApp<C extends ContractDef>(
   contract: C,
   options?: CreateHonoAppOptions,
-): HandshakeApp<C> {
+): HandshakeApp<C>;
+export function createHonoApp<HonoEnv extends Env, C extends ContractDef>(
+  app: Hono<HonoEnv>,
+  contract: C,
+  options?: CreateHonoAppOptions,
+): HandshakeApp<C, HonoEnv>;
+export function createHonoApp(
+  appOrContract: Hono | ContractDef,
+  contractOrOptions?: ContractDef | CreateHonoAppOptions,
+  maybeOptions?: CreateHonoAppOptions,
+): HandshakeApp<ContractDef, Env> {
+  const providedApp = appOrContract instanceof Hono ? appOrContract : undefined;
+  const contract = (providedApp ? contractOrOptions : appOrContract) as ContractDef;
+  const options = (providedApp ? maybeOptions : (contractOrOptions as CreateHonoAppOptions)) ?? {};
+
   const registry = new HandlerRegistry(contract);
 
   return {
@@ -54,8 +69,8 @@ export function createHonoApp<C extends ContractDef>(
 
     build() {
       registry.validateComplete();
-      const app = options?.app ?? new Hono();
-      const basePath = options?.basePath ?? registry.basePath;
+      const app = providedApp ?? new Hono();
+      const basePath = options.basePath ?? registry.basePath;
 
       for (const [name, endpoint] of registry.entries) {
         const handler = registry.getHandler(name);
@@ -115,7 +130,7 @@ export function createHonoApp<C extends ContractDef>(
           }
 
           const shouldValidate =
-            handlerOptions?.validateResponse ?? options?.validateResponse ?? true;
+            handlerOptions?.validateResponse ?? options.validateResponse ?? true;
 
           if (shouldValidate && endpoint.response) {
             try {

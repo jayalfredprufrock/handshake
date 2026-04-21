@@ -30,31 +30,39 @@ const app = api.build();
 
 ## `createHonoApp(contract, options?)`
 
-Creates a `HandshakeApp` that wraps a Hono application.
+## `createHonoApp(app, contract, options?)`
+
+Creates a `HandshakeApp` that wraps a Hono application. When an existing `Hono` instance is passed as the first argument, its `Env` (Bindings/Variables) is threaded through to handlers so `c.env` and `c.var` are fully typed.
 
 ### Options
 
 ```ts
 interface CreateHonoAppOptions {
-  app?: Hono;
   basePath?: string;
   validateResponse?: boolean;
 }
 ```
 
-#### `app`
+#### Passing an existing Hono app
 
-An existing Hono instance to register routes on. If omitted, a new `Hono()` is created. Use this when you need to add middleware or custom routes alongside the contract routes.
+Pass a Hono instance as the first argument to register routes on it. Use this when you need to add middleware or custom routes alongside the contract routes. The app's `Env` generic flows through to `c` in every handler.
 
 ```ts
 import { Hono } from "hono";
 import { logger } from "hono/logger";
 
-const hono = new Hono();
+type Env = { Variables: { user: { id: string } } };
+
+const hono = new Hono<Env>();
 hono.use("*", logger());
 hono.get("/health", (c) => c.json({ ok: true }));
 
-const api = createHonoApp(contract, { app: hono });
+const api = createHonoApp(hono, contract);
+
+api.handle("getUser", ({ c, params }) => {
+  const user = c.var.user;
+  return { id: params.id, name: user.id };
+});
 ```
 
 #### `basePath`
