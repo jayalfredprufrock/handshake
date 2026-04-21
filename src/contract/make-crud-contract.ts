@@ -8,6 +8,7 @@ import {
   type TSchema,
   Type,
 } from "typebox";
+import type { EndpointMeta, MetaField } from "./make-contract";
 
 export type Merge2<A, B> = A extends string[]
   ? B extends string[]
@@ -35,14 +36,13 @@ export type MakePath<B extends string, P> = P extends [infer P1, ...infer R]
 
 export type AllKeys<T> = Extract<T extends any ? keyof T : never, string>;
 
-export interface CrudContractConfig<S> {
+export type CrudContractConfig<S> = {
   basePath: string;
   params: AllKeys<S>[];
   hidden?: AllKeys<S>[];
   readonly?: AllKeys<S>[];
   immutable?: AllKeys<S>[];
-  meta?: Record<string, any>;
-}
+} & MetaField<EndpointMeta>;
 
 export type CrudContract<T extends TSchema, C extends CrudContractConfig<Static<T>>> = {
   get: {
@@ -50,31 +50,31 @@ export type CrudContract<T extends TSchema, C extends CrudContractConfig<Static<
     path: MakePath<C["basePath"], C["params"]>;
     params: TryPick<T, C["params"]>;
     response: TryOmit<T, C["hidden"]>;
-  };
+  } & MetaField<EndpointMeta>;
   list: {
     method: "GET";
     path: C["basePath"];
     response: TArray<TryOmit<T, C["hidden"]>>;
-  };
+  } & MetaField<EndpointMeta>;
   create: {
     method: "POST";
     path: C["basePath"];
     body: TryOmit<T, Merge2<C["hidden"], C["readonly"]>>;
     response: TryOmit<T, C["hidden"]>;
-  };
+  } & MetaField<EndpointMeta>;
   update: {
     method: "PATCH";
     path: MakePath<C["basePath"], C["params"]>;
     params: TryPick<T, C["params"]>;
     body: TPartial<TryOmit<T, Merge3<C["hidden"], C["readonly"], C["immutable"]>>>;
     response: TryOmit<T, C["hidden"]>;
-  };
+  } & MetaField<EndpointMeta>;
   delete: {
     method: "DELETE";
     path: MakePath<C["basePath"], C["params"]>;
     params: TryPick<T, C["params"]>;
     response: TryOmit<T, C["hidden"]>;
-  };
+  } & MetaField<EndpointMeta>;
 };
 
 const normalizePath = (path: string): string => {
@@ -101,16 +101,19 @@ export const makeCrudContract = <T extends TSchema, const C extends CrudContract
   const hidden = config.hidden ?? [];
   const ro = config.readonly ?? [];
   const immutable = config.immutable ?? [];
+  const meta = (config as { meta?: EndpointMeta }).meta;
+  const metaField = meta !== undefined ? { meta } : {};
 
   return {
-    get: { method: "GET", path: paramsPath, params, response },
-    list: { method: "GET", path: basePath, response: Type.Array(response) },
-    delete: { method: "DELETE", path: paramsPath, params, response },
+    get: { method: "GET", path: paramsPath, params, response, ...metaField },
+    list: { method: "GET", path: basePath, response: Type.Array(response), ...metaField },
+    delete: { method: "DELETE", path: paramsPath, params, response, ...metaField },
     create: {
       method: "POST",
       path: basePath,
       response,
       body: Type.Omit(schema, [...hidden, ...ro]) as any,
+      ...metaField,
     },
     update: {
       method: "PATCH",
@@ -118,6 +121,7 @@ export const makeCrudContract = <T extends TSchema, const C extends CrudContract
       response,
       params,
       body: Type.Partial(Type.Omit(schema, [...hidden, ...ro, ...immutable])) as any,
+      ...metaField,
     },
-  };
+  } as CrudContract<T, C>;
 };

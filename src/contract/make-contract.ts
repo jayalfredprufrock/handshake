@@ -2,7 +2,11 @@ import type { Static, TSchema } from "typebox";
 
 export type InferSchema<S> = S extends TSchema ? Static<S> : any;
 
-export interface Endpoint {
+export interface EndpointMeta extends Record<string, any> {}
+
+export type MetaField<M> = {} extends M ? { meta?: M } : { meta: M };
+
+export type Endpoint = {
   method: "GET" | "POST" | "PATCH" | "DELETE";
   path: string;
   response: TSchema;
@@ -10,8 +14,7 @@ export interface Endpoint {
   body?: TSchema;
   query?: TSchema;
   description?: string;
-  meta?: Record<string, any>;
-}
+} & MetaField<EndpointMeta>;
 
 export interface ContractDef<C extends Record<string, Endpoint> = Record<string, Endpoint>> {
   basePath: string;
