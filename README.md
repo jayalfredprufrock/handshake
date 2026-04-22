@@ -95,7 +95,7 @@ let nextId = 1;
 
 const api = createHonoApp(contract);
 
-api.handle("getUser", ({ params }) => {
+api.implement("getUser", ({ params }) => {
   const user = users.get(params.id);
   if (!user) {
     return new Response(JSON.stringify({ error: "Not found" }), { status: 404 });
@@ -103,16 +103,16 @@ api.handle("getUser", ({ params }) => {
   return user;
 });
 
-api.handle("listUsers", () => [...users.values()]);
+api.implement("listUsers", () => [...users.values()]);
 
-api.handle("createUser", ({ body }) => {
+api.implement("createUser", ({ body }) => {
   const id = String(nextId++);
   const user = { id, ...body };
   users.set(id, user);
   return user;
 });
 
-api.handle("deleteUser", ({ params }) => {
+api.implement("deleteUser", ({ params }) => {
   users.delete(params.id);
   return { id: params.id };
 });
@@ -135,8 +135,114 @@ The adapter validates incoming requests automatically:
 const api = createHonoApp(contract, { validateResponse: false });
 
 // Or per-handler
-api.handle("listUsers", () => [...users.values()], { validateResponse: false });
+api.implement("listUsers", () => [...users.values()], { validateResponse: false });
 ```
+
+#### Bringing your own Hono app
+
+Pass an existing `Hono` instance as the first argument to register the contract routes on it. This is the way to attach middleware or non-contract routes, and the app's `Env` generic (Bindings/Variables) is threaded through to `c` in every handler so `c.env` and `c.var` are fully typed.
+
+```ts
+import { Hono } from "hono";
+import { logger } from "hono/logger";
+
+type Env = { Variables: { user: { id: string } } };
+
+const hono = new Hono<Env>();
+hono.use("*", logger());
+hono.get("/health", (c) => c.json({ ok: true }));
+
+const api = createHonoApp(hono, contract);
+
+api.implement("getUser", ({ c, params }) => {
+  const user = c.var.user; // typed from Env
+  return { id: params.id, name: user.id };
+});
+```
+
+#### Splitting contracts across files
+
+For larger apps, split the contract into one file per resource and implement each independently with `implementContract`. Pass the resulting route modules to `createHonoApp` as an array — each is mounted as an isolated Hono sub-app at the contract's `basePath`, so per-module middleware stays scoped to its own routes.
+
+Authoring convention: give each sub-contract a `basePath` (e.g. `"/users"`) and write endpoint paths relative to it (e.g. `"/:id"`). The `basePath` is what the sub-app is mounted at.
+
+```ts
+// contracts/users.ts — pure, no server imports
+import { Type } from "typebox";
+import { makeContract } from "@jayalfredprufrock/handshake/contract";
+
+export const usersContract = makeContract("/users", {
+  getUser: {
+    method: "GET",
+    path: "/:id",
+    params: Type.Object({ id: Type.String() }),
+    response: Type.Object({ id: Type.String(), name: Type.String() }),
+  },
+  listUsers: {
+    method: "GET",
+    path: "/",
+    response: Type.Array(Type.Object({ id: Type.String(), name: Type.String() })),
+  },
+});
+```
+
+```ts
+// routes/users.ts — object form: concise, type-checked for completeness
+import { implementContract } from "@jayalfredprufrock/handshake/hono";
+import { usersContract } from "../contracts/users";
+
+export const usersRoute = implementContract(usersContract, {
+  getUser: ({ params }) => ({ id: params.id, name: "Alice" }),
+  listUsers: () => [],
+});
+```
+
+Missing a handler for any contract key is a type error. Use the closure form when you need middleware or direct access to the Hono sub-app:
+
+```ts
+// routes/posts.ts — closure form: middleware + handlers
+import { implementContract } from "@jayalfredprufrock/handshake/hono";
+import { bearerAuth } from "hono/bearer-auth";
+import { postsContract } from "../contracts/posts";
+
+export const postsRoute = implementContract(postsContract, (app) => {
+  app.use("*", bearerAuth({ token: process.env.API_TOKEN! }));
+
+  app.implement("getPost", ({ params }) => ({ id: params.id, title: "Hello" }));
+});
+```
+
+Assemble the server by passing the route modules to `createHonoApp`:
+
+```ts
+// server.ts
+import { Hono } from "hono";
+import { logger } from "hono/logger";
+import { createHonoApp } from "@jayalfredprufrock/handshake/hono";
+import { usersRoute } from "./routes/users";
+import { postsRoute } from "./routes/posts";
+
+const root = new Hono();
+root.use("*", logger()); // root-level middleware applies to every route
+
+const app = createHonoApp(root, [usersRoute, postsRoute]);
+```
+
+For the client, compose a single contract with a plain object spread:
+
+```ts
+// contracts/index.ts
+import { makeContract } from "@jayalfredprufrock/handshake/contract";
+import { usersContract } from "./users";
+import { postsContract } from "./posts";
+
+export const contract = makeContract("/api", {
+  ...usersContract.endpoints,
+  ...postsContract.endpoints,
+});
+```
+
+This barrel has zero server dependencies — safe to import from client bundles.
 
 ### 3. Create a Client
 

@@ -19,11 +19,11 @@ import { contract } from "./contract";
 
 const api = createHonoApp(contract);
 
-api.handle("getUser", ({ params }) => {
+api.implement("getUser", ({ params }) => {
   return { id: params.id, name: "Alice" };
 });
 
-api.handle("listUsers", () => []);
+api.implement("listUsers", () => []);
 
 const app = api.build();
 ```
@@ -59,7 +59,7 @@ hono.get("/health", (c) => c.json({ ok: true }));
 
 const api = createHonoApp(hono, contract);
 
-api.handle("getUser", ({ c, params }) => {
+api.implement("getUser", ({ c, params }) => {
   const user = c.var.user;
   return { id: params.id, name: user.id };
 });
@@ -81,12 +81,12 @@ Enable or disable [response validation](/handshake/core/validation/#response-val
 const api = createHonoApp(contract, { validateResponse: false });
 ```
 
-## `handle(name, handler, options?)`
+## `implement(name, handler, options?)`
 
 Register a handler for an endpoint. The handler receives a typed input object and must return the response type defined in the contract (or a raw `Response`).
 
 ```ts
-api.handle("getUser", ({ params }) => {
+api.implement("getUser", ({ params }) => {
   return { id: params.id, name: "Alice" };
 });
 ```
@@ -105,7 +105,7 @@ The input object contains only the fields relevant to the endpoint:
 The Hono `Context` object (`c`) is always available, giving you access to the full Hono API for cases that need it:
 
 ```ts
-api.handle("getUser", ({ params, c }) => {
+api.implement("getUser", ({ params, c }) => {
   const authHeader = c.req.header("authorization");
   // ...
   return { id: params.id, name: "Alice" };
@@ -120,7 +120,7 @@ Handlers can return either:
 - **A `Response` object** — passed through as-is, bypassing response validation
 
 ```ts
-api.handle("getUser", ({ params }) => {
+api.implement("getUser", ({ params }) => {
   const user = users.get(params.id);
   if (!user) {
     // Raw Response — full control over status, headers, body
@@ -146,7 +146,7 @@ Per-handler response validation override. Takes precedence over the global setti
 
 ```ts
 // Global validation is on, but skip it for this expensive endpoint
-api.handle("listUsers", () => [...users.values()], {
+api.implement("listUsers", () => [...users.values()], {
   validateResponse: false,
 });
 ```
@@ -184,12 +184,12 @@ The adapter enforces type safety at compile time:
 
 - Handler inputs are typed based on the endpoint definition — `params`, `body`, and `query` have the correct shapes
 - Handler return values must match the endpoint's `response` schema
-- The `name` argument to `handle()` only accepts valid endpoint names from the contract
+- The `name` argument to `implement()` only accepts valid endpoint names from the contract
 
 Returning an incorrect response type produces a TypeScript error:
 
 ```ts
-api.handle("getUser", ({ params }) => {
+api.implement("getUser", ({ params }) => {
   return { id: 123, name: "Alice" };
   //       ~~~~~~
   // Type 'number' is not assignable to type 'string'

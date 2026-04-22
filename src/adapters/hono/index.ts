@@ -22,7 +22,7 @@ type Handler<E extends Endpoint, HonoEnv extends Env> = (
 ) => InferSchema<E["response"]> | Response | Promise<InferSchema<E["response"]> | Response>;
 
 export interface HandshakeApp<C extends ContractDef, HonoEnv extends Env = Env> {
-  handle<K extends keyof C["endpoints"] & string>(
+  implement<K extends keyof C["endpoints"] & string>(
     name: K,
     handler: Handler<C["endpoints"][K], HonoEnv>,
     options?: HandlerOptions,
@@ -30,9 +30,24 @@ export interface HandshakeApp<C extends ContractDef, HonoEnv extends Env = Env> 
   build(): Hono<HonoEnv>;
 }
 
+export type HandshakeHono<C extends ContractDef, HonoEnv extends Env = Env> = Hono<HonoEnv> & {
+  implement: HandshakeApp<C, HonoEnv>["implement"];
+};
+
 export interface CreateHonoAppOptions {
   basePath?: string;
   validateResponse?: boolean;
+}
+
+export type RouteRegister<C extends ContractDef> = (app: HandshakeHono<C>) => void;
+
+export type RouteHandlersMap<C extends ContractDef> = {
+  [K in keyof C["endpoints"] & string]: Handler<C["endpoints"][K], Env>;
+};
+
+export interface RouteModule<C extends ContractDef = ContractDef> {
+  readonly contract: C;
+  readonly impl: RouteRegister<C> | RouteHandlersMap<C>;
 }
 
 const methodMap = {
@@ -41,6 +56,21 @@ const methodMap = {
   PATCH: "patch",
   DELETE: "delete",
 } as const;
+
+export function implementContract<C extends ContractDef>(
+  contract: C,
+  register: RouteRegister<C>,
+): RouteModule<C>;
+export function implementContract<C extends ContractDef>(
+  contract: C,
+  handlers: RouteHandlersMap<C>,
+): RouteModule<C>;
+export function implementContract<C extends ContractDef>(
+  contract: C,
+  impl: RouteRegister<C> | RouteHandlersMap<C>,
+): RouteModule<C> {
+  return { contract, impl };
+}
 
 export function createHonoApp<C extends ContractDef>(
   contract: C,
@@ -51,19 +81,59 @@ export function createHonoApp<HonoEnv extends Env, C extends ContractDef>(
   contract: C,
   options?: CreateHonoAppOptions,
 ): HandshakeApp<C, HonoEnv>;
+export function createHonoApp(routes: readonly RouteModule[], options?: CreateHonoAppOptions): Hono;
+export function createHonoApp<HonoEnv extends Env>(
+  app: Hono<HonoEnv>,
+  routes: readonly RouteModule[],
+  options?: CreateHonoAppOptions,
+): Hono<HonoEnv>;
 export function createHonoApp(
-  appOrContract: Hono | ContractDef,
-  contractOrOptions?: ContractDef | CreateHonoAppOptions,
+  appOrContractOrRoutes: Hono | ContractDef | readonly RouteModule[],
+  contractOrRoutesOrOptions?: ContractDef | readonly RouteModule[] | CreateHonoAppOptions,
   maybeOptions?: CreateHonoAppOptions,
-): HandshakeApp<ContractDef, Env> {
-  const providedApp = appOrContract instanceof Hono ? appOrContract : undefined;
-  const contract = (providedApp ? contractOrOptions : appOrContract) as ContractDef;
-  const options = (providedApp ? maybeOptions : (contractOrOptions as CreateHonoAppOptions)) ?? {};
+): HandshakeApp<ContractDef, Env> | Hono {
+  const firstIsHono = appOrContractOrRoutes instanceof Hono;
+  const providedApp = firstIsHono ? (appOrContractOrRoutes as Hono) : undefined;
+  const second = firstIsHono ? contractOrRoutesOrOptions : appOrContractOrRoutes;
+  const options = ((firstIsHono
+    ? maybeOptions
+    : (contractOrRoutesOrOptions as CreateHonoAppOptions)) ?? {}) as CreateHonoAppOptions;
 
+  if (Array.isArray(second)) {
+    const root = providedApp ?? new Hono();
+    for (const route of second as readonly RouteModule[]) {
+      const subHono = new Hono();
+      const subApi = createSingleContractApp(subHono, route.contract, {
+        ...options,
+        basePath: "",
+      });
+      if (typeof route.impl === "function") {
+        const handshakeHono = subHono as HandshakeHono<ContractDef>;
+        handshakeHono.implement = subApi.implement.bind(subApi);
+        route.impl(handshakeHono);
+      } else {
+        for (const [name, handler] of Object.entries(route.impl)) {
+          subApi.implement(name as any, handler as any);
+        }
+      }
+      subApi.build();
+      root.route(route.contract.basePath, subHono);
+    }
+    return root;
+  }
+
+  return createSingleContractApp(providedApp, second as ContractDef, options);
+}
+
+function createSingleContractApp(
+  providedApp: Hono | undefined,
+  contract: ContractDef,
+  options: CreateHonoAppOptions,
+): HandshakeApp<ContractDef, Env> {
   const registry = new HandlerRegistry(contract);
 
   return {
-    handle(name, handler, handlerOptions) {
+    implement(name, handler, handlerOptions) {
       registry.register(name, handler, handlerOptions);
     },
 

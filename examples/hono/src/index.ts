@@ -14,7 +14,7 @@ nextId = 3;
 
 const api = createHonoApp(contract);
 
-api.handle("getUser", ({ params }) => {
+api.implement("getUser", ({ params }) => {
   const user = users.get(params.id);
   if (!user) {
     return new Response(JSON.stringify({ error: "User not found" }), {
@@ -25,18 +25,18 @@ api.handle("getUser", ({ params }) => {
   return user;
 });
 
-api.handle("listUsers", () => {
+api.implement("listUsers", () => {
   return [...users.values()];
 });
 
-api.handle("createUser", ({ body }) => {
+api.implement("createUser", ({ body }) => {
   const id = String(nextId++);
   const user = { id, name: body.name, email: body.email };
   users.set(id, user);
   return user;
 });
 
-api.handle("deleteUser", ({ params }) => {
+api.implement("deleteUser", ({ params }) => {
   users.delete(params.id);
   return { id: params.id };
 });

@@ -130,7 +130,7 @@ Response validation is enabled by default. It can be disabled globally when crea
 const api = createHonoApp(contract, { validateResponse: false });
 
 // Disable for a specific handler
-api.handle("listUsers", () => [...users.values()], {
+api.implement("listUsers", () => [...users.values()], {
   validateResponse: false,
 });
 ```

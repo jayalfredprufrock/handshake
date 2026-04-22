@@ -65,7 +65,7 @@ const contract = makeContract("/api", {
 import { createHonoApp } from "@jayalfredprufrock/handshake/hono";
 
 const api = createHonoApp(contract);
-api.handle("getUser", ({ params }) => {
+api.implement("getUser", ({ params }) => {
   // params.id is typed as string
   return { id: params.id, name: "Alice" };
 });

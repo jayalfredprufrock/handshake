@@ -23,12 +23,12 @@ const contract = makeContract("/api", {
 describe("hono adapter", () => {
   test("provides Hono context in handler input", async () => {
     const api = createHonoApp(contract);
-    api.handle("getUser", ({ params, c }) => {
+    api.implement("getUser", ({ params, c }) => {
       expect(c.req).toBeDefined();
       expect(c.req.header("x-test")).toBe("hello");
       return { id: params.id, name: "Alice" };
     });
-    api.handle("createUser", ({ body }) => ({ id: "1", name: body.name }));
+    api.implement("createUser", ({ body }) => ({ id: "1", name: body.name }));
     const app = api.build();
 
     const res = await app.request("/api/users/1", {
@@ -39,8 +39,8 @@ describe("hono adapter", () => {
 
   test("supports basePath override", async () => {
     const api = createHonoApp(contract, { basePath: "/v2" });
-    api.handle("getUser", ({ params }) => ({ id: params.id, name: "Alice" }));
-    api.handle("createUser", ({ body }) => ({ id: "1", name: body.name }));
+    api.implement("getUser", ({ params }) => ({ id: params.id, name: "Alice" }));
+    api.implement("createUser", ({ body }) => ({ id: "1", name: body.name }));
     const app = api.build();
 
     const res = await app.request("/v2/users/1");
@@ -53,8 +53,8 @@ describe("hono adapter", () => {
     hono.get("/health", (c) => c.json({ ok: true }));
 
     const api = createHonoApp(hono, contract);
-    api.handle("getUser", ({ params }) => ({ id: params.id, name: "Alice" }));
-    api.handle("createUser", ({ body }) => ({ id: "1", name: body.name }));
+    api.implement("getUser", ({ params }) => ({ id: params.id, name: "Alice" }));
+    api.implement("createUser", ({ body }) => ({ id: "1", name: body.name }));
     const app = api.build();
 
     const healthRes = await app.request("/health");
@@ -68,11 +68,11 @@ describe("hono adapter", () => {
   describe("type inference", () => {
     test("handler params are typed from contract", () => {
       const api = createHonoApp(contract);
-      api.handle("getUser", ({ params }) => {
+      api.implement("getUser", ({ params }) => {
         expectTypeOf(params.id).toEqualTypeOf<string>();
         return { id: params.id, name: "Alice" };
       });
-      api.handle("createUser", ({ body }) => {
+      api.implement("createUser", ({ body }) => {
         expectTypeOf(body.name).toEqualTypeOf<string>();
         return { id: "1", name: body.name };
       });
@@ -80,23 +80,23 @@ describe("hono adapter", () => {
 
     test("handler return type matches response schema", () => {
       const api = createHonoApp(contract);
-      api.handle("getUser", ({ params }) => {
+      api.implement("getUser", ({ params }) => {
         type Expected = Static<(typeof contract)["endpoints"]["getUser"]["response"]>;
         type Result = { id: string; name: string };
         expectTypeOf<Result>().toMatchTypeOf<Expected>();
         return { id: params.id, name: "Alice" };
       });
-      api.handle("createUser", ({ body }) => ({ id: "1", name: body.name }));
+      api.implement("createUser", ({ body }) => ({ id: "1", name: body.name }));
     });
 
-    test("handle() only accepts valid endpoint names", () => {
+    test("implement() only accepts valid endpoint names", () => {
       const api = createHonoApp(contract);
       expect(() => {
         // @ts-expect-error — "nonExistent" is not a valid endpoint name
-        api.handle("nonExistent", () => ({}));
+        api.implement("nonExistent", () => ({}));
       }).toThrow();
-      api.handle("getUser", ({ params }) => ({ id: params.id, name: "Alice" }));
-      api.handle("createUser", ({ body }) => ({ id: "1", name: body.name }));
+      api.implement("getUser", ({ params }) => ({ id: params.id, name: "Alice" }));
+      api.implement("createUser", ({ body }) => ({ id: "1", name: body.name }));
     });
   });
 });
