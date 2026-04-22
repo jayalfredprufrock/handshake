@@ -46,11 +46,11 @@ Handshake is a contract-first API library for TypeScript. You define your endpoi
 ## Quick Example
 
 ```ts
-import { makeContract } from "@jayalfredprufrock/handshake/contract";
+import { createContract } from "@jayalfredprufrock/handshake/contract";
 import { Type } from "typebox";
 
 // Define once
-const contract = makeContract("/api", {
+const contract = createContract("/api", {
   getUser: {
     method: "GET",
     path: "/users/:id",

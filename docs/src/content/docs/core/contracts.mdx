@@ -1,19 +1,19 @@
 ---
 title: Contracts
-description: Define your API shape using makeContract and TypeBox schemas.
+description: Define your API shape using createContract and TypeBox schemas.
 ---
 
 A contract is the single source of truth for your API. It defines every endpoint — its HTTP method, path, path parameters, query parameters, request body, and response shape. Both the server adapter and the client are derived from this contract.
 
 ## Creating a Contract
 
-Use `makeContract` to define a contract. The first argument is an optional base path that prefixes all endpoint paths. The second argument is a record of endpoint definitions.
+Use `createContract` to define a contract. The first argument is an optional base path that prefixes all endpoint paths. The second argument is a record of endpoint definitions.
 
 ```ts
-import { makeContract } from "@jayalfredprufrock/handshake/contract";
+import { createContract } from "@jayalfredprufrock/handshake/contract";
 import { Type } from "typebox";
 
-const contract = makeContract("/api", {
+const contract = createContract("/api", {
   getUser: {
     method: "GET",
     path: "/users/:id",
@@ -26,7 +26,7 @@ const contract = makeContract("/api", {
 If you omit the base path, it defaults to `"/"`:
 
 ```ts
-const contract = makeContract({
+const contract = createContract({
   health: {
     method: "GET",
     path: "/health",
@@ -136,11 +136,11 @@ export const userEndpoints = {
 
 ```ts
 // contract.ts
-import { makeContract } from "@jayalfredprufrock/handshake/contract";
+import { createContract } from "@jayalfredprufrock/handshake/contract";
 import { userEndpoints } from "./users";
 import { postEndpoints } from "./posts";
 
-export const contract = makeContract("/api", {
+export const contract = createContract("/api", {
   ...userEndpoints,
   ...postEndpoints,
 });
@@ -148,7 +148,7 @@ export const contract = makeContract("/api", {
 
 ## The `ContractDef` Type
 
-The `makeContract` function returns a `ContractDef<C>` object:
+The `createContract` function returns a `ContractDef<C>` object:
 
 ```ts
 interface ContractDef<C extends Record<string, Endpoint>> {

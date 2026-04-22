@@ -1,10 +1,10 @@
 import { describe, expect, test } from "vite-plus/test";
 import { Type } from "typebox";
-import { makeContract } from "../contract";
+import { createContract } from "../contract";
 import type { AdapterFactory } from "./types";
 
 export function runAdapterTests(createAdapter: AdapterFactory) {
-  const crudContract = makeContract("/api", {
+  const crudContract = createContract("/api", {
     getUser: {
       method: "GET",
       path: "/users/:id",
@@ -100,7 +100,7 @@ export function runAdapterTests(createAdapter: AdapterFactory) {
       });
 
       test("handles contract with default basePath", async () => {
-        const simpleContract = makeContract({
+        const simpleContract = createContract({
           health: {
             method: "GET",
             path: "/health",
@@ -161,7 +161,7 @@ export function runAdapterTests(createAdapter: AdapterFactory) {
     });
 
     describe("param validation and coercion", () => {
-      const numericContract = makeContract({
+      const numericContract = createContract({
         getItem: {
           method: "GET",
           path: "/items/:id",
@@ -228,7 +228,7 @@ export function runAdapterTests(createAdapter: AdapterFactory) {
       });
 
       test("coerces string to integer", async () => {
-        const intContract = makeContract({
+        const intContract = createContract({
           getItem: {
             method: "GET",
             path: "/items/:id",
@@ -247,7 +247,7 @@ export function runAdapterTests(createAdapter: AdapterFactory) {
       });
 
       test("coerces string to boolean", async () => {
-        const boolContract = makeContract({
+        const boolContract = createContract({
           getFlag: {
             method: "GET",
             path: "/flags/:enabled",
@@ -267,7 +267,7 @@ export function runAdapterTests(createAdapter: AdapterFactory) {
     });
 
     describe("query validation and coercion", () => {
-      const searchContract = makeContract({
+      const searchContract = createContract({
         search: {
           method: "GET",
           path: "/search",
@@ -325,7 +325,7 @@ export function runAdapterTests(createAdapter: AdapterFactory) {
       });
 
       test("coerces boolean query params", async () => {
-        const filterContract = makeContract({
+        const filterContract = createContract({
           list: {
             method: "GET",
             path: "/items",
@@ -353,7 +353,7 @@ export function runAdapterTests(createAdapter: AdapterFactory) {
       });
 
       test("handles array query params from repeated keys", async () => {
-        const tagContract = makeContract({
+        const tagContract = createContract({
           search: {
             method: "GET",
             path: "/search",
@@ -372,7 +372,7 @@ export function runAdapterTests(createAdapter: AdapterFactory) {
       });
 
       test("coerces single value into array when schema expects array", async () => {
-        const tagContract = makeContract({
+        const tagContract = createContract({
           search: {
             method: "GET",
             path: "/search",
@@ -391,7 +391,7 @@ export function runAdapterTests(createAdapter: AdapterFactory) {
       });
 
       test("coerces array items to numbers", async () => {
-        const idsContract = makeContract({
+        const idsContract = createContract({
           getMany: {
             method: "GET",
             path: "/items",
@@ -423,7 +423,7 @@ export function runAdapterTests(createAdapter: AdapterFactory) {
       });
 
       test("handles mix of array and scalar query params", async () => {
-        const mixedContract = makeContract({
+        const mixedContract = createContract({
           search: {
             method: "GET",
             path: "/search",
@@ -527,7 +527,7 @@ export function runAdapterTests(createAdapter: AdapterFactory) {
     });
 
     describe("response validation", () => {
-      const responseContract = makeContract({
+      const responseContract = createContract({
         getUser: {
           method: "GET",
           path: "/users/:id",

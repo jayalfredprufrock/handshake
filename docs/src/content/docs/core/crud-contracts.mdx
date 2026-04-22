@@ -3,12 +3,12 @@ title: CRUD Contracts
 description: Generate standard CRUD endpoints from a single TypeBox schema.
 ---
 
-For common REST resources, `makeCrudContract` generates a full set of CRUD endpoints (`get`, `list`, `create`, `update`, `delete`) from a single TypeBox schema and a configuration object.
+For common REST resources, `createCrud` generates a full set of CRUD endpoints (`get`, `list`, `create`, `update`, `delete`) from a single TypeBox schema and a configuration object.
 
 ## Basic Usage
 
 ```ts
-import { makeCrudContract } from "@jayalfredprufrock/handshake/contract";
+import { createContract, createCrud } from "@jayalfredprufrock/handshake/contract";
 import { Type } from "typebox";
 
 const User = Type.Object({
@@ -20,35 +20,28 @@ const User = Type.Object({
   createdAt: Type.String(),
 });
 
-const userEndpoints = makeCrudContract(User, {
-  basePath: "/users",
+const userEndpoints = createCrud(User, {
   params: ["id"],
 });
+
+const contract = createContract("/users", userEndpoints);
 ```
 
-This generates five endpoints:
+This generates five endpoints, all relative to the wrapping contract's base path:
 
-| Name     | Method   | Path         | Body                          | Response        |
-| -------- | -------- | ------------ | ----------------------------- | --------------- |
-| `get`    | `GET`    | `/users/:id` | —                             | Full schema     |
-| `list`   | `GET`    | `/users`     | —                             | Array of schema |
-| `create` | `POST`   | `/users`     | Full schema (minus params)    | Full schema     |
-| `update` | `PATCH`  | `/users/:id` | Partial schema (minus params) | Full schema     |
-| `delete` | `DELETE` | `/users/:id` | —                             | Full schema     |
+| Name     | Method   | Path   | Body                          | Response        |
+| -------- | -------- | ------ | ----------------------------- | --------------- |
+| `get`    | `GET`    | `/:id` | —                             | Full schema     |
+| `list`   | `GET`    | `/`    | —                             | Array of schema |
+| `create` | `POST`   | `/`    | Full schema (minus params)    | Full schema     |
+| `update` | `PATCH`  | `/:id` | Partial schema (minus params) | Full schema     |
+| `delete` | `DELETE` | `/:id` | —                             | Full schema     |
+
+With `basePath: "/users"` on the wrapping contract, final URLs resolve to `/users`, `/users/:id`, etc.
 
 ## Configuration
 
-The second argument to `makeCrudContract` is a configuration object:
-
-### `basePath`
-
-**Required.** The URL path for the collection. Individual resource paths are derived by appending the `params` as path segments.
-
-```ts
-basePath: "/users";
-// get/update/delete → /users/:id
-// list/create → /users
-```
+The second argument to `createCrud` is a configuration object:
 
 ### `params`
 
@@ -56,10 +49,10 @@ basePath: "/users";
 
 ```ts
 params: ["id"];
-// Path: /users/:id
+// Path: /:id
 
 params: ["tenantId", "id"];
-// Path: /users/:tenantId/:id
+// Path: /:tenantId/:id
 ```
 
 ### `hidden`
@@ -89,8 +82,7 @@ immutable: ["role"];
 ## Full Example
 
 ```ts
-const userEndpoints = makeCrudContract(User, {
-  basePath: "/users",
+const userEndpoints = createCrud(User, {
   params: ["id"],
   hidden: ["passwordHash"],
   readonly: ["id", "createdAt"],
@@ -113,20 +105,15 @@ This produces:
 - `email` appears in `create` but not in `update` (`immutable`)
 - `update` body fields are all optional (partial update semantics)
 
-## Using with `makeContract`
+## Using with `createContract`
 
-The result of `makeCrudContract` is a plain object of endpoint definitions. You can spread it into a `makeContract` call alongside other endpoints:
+The result of `createCrud` is a plain object of endpoint definitions — each endpoint's `path` is relative, so wrap the result in a `createContract` call with a base path:
 
 ```ts
-import { makeContract, makeCrudContract } from "@jayalfredprufrock/handshake/contract";
+import { createContract, createCrud } from "@jayalfredprufrock/handshake/contract";
 
-const contract = makeContract("/api", {
-  ...makeCrudContract(User, { basePath: "/users", params: ["id"] }),
-  ...makeCrudContract(Post, { basePath: "/posts", params: ["id"] }),
-  health: {
-    method: "GET",
-    path: "/health",
-    response: Type.Object({ ok: Type.Boolean() }),
-  },
-});
+const usersContract = createContract("/users", createCrud(User, { params: ["id"] }));
+const postsContract = createContract("/posts", createCrud(Post, { params: ["id"] }));
 ```
+
+Each resource produces its own contract with identical endpoint keys (`get`, `list`, …), so treat them as separate contracts rather than spreading them into a single one. Use `implementContract` and pass the resulting route modules to `createHonoApp` to serve them from the same app — see [Splitting contracts across files](/handshake/server/hono/).

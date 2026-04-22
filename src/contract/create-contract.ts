@@ -23,14 +23,14 @@ export interface ContractDef<C extends Record<string, Endpoint> = Record<string,
 
 export type Contract = ContractDef;
 
-export function makeContract<const C extends Record<string, Endpoint>>(
+export function createContract<const C extends Record<string, Endpoint>>(
   endpoints: C,
 ): ContractDef<C>;
-export function makeContract<const C extends Record<string, Endpoint>>(
+export function createContract<const C extends Record<string, Endpoint>>(
   basePath: string,
   endpoints: C,
 ): ContractDef<C>;
-export function makeContract(
+export function createContract(
   basePathOrEndpoints: string | Record<string, Endpoint>,
   maybeEndpoints?: Record<string, Endpoint>,
 ): ContractDef {

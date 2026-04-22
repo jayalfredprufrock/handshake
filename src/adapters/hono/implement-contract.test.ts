@@ -1,10 +1,10 @@
 import { describe, expect, expectTypeOf, test } from "vite-plus/test";
 import { Hono } from "hono";
 import { Type } from "typebox";
-import { makeContract } from "../../contract";
+import { createContract } from "../../contract";
 import { createHonoApp, implementContract } from "./index";
 
-const usersContract = makeContract("/users", {
+const usersContract = createContract("/users", {
   getUser: {
     method: "GET",
     path: "/:id",
@@ -18,7 +18,7 @@ const usersContract = makeContract("/users", {
   },
 });
 
-const postsContract = makeContract("/posts", {
+const postsContract = createContract("/posts", {
   getPost: {
     method: "GET",
     path: "/:id",

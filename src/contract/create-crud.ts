@@ -8,7 +8,7 @@ import {
   type TSchema,
   Type,
 } from "typebox";
-import type { EndpointMeta, MetaField } from "./make-contract";
+import type { EndpointMeta, MetaField } from "./create-contract";
 
 export type Merge2<A, B> = A extends string[]
   ? B extends string[]
@@ -37,7 +37,6 @@ export type MakePath<B extends string, P> = P extends [infer P1, ...infer R]
 export type AllKeys<T> = Extract<T extends any ? keyof T : never, string>;
 
 export type CrudContractConfig<S> = {
-  basePath: string;
   params: AllKeys<S>[];
   hidden?: AllKeys<S>[];
   readonly?: AllKeys<S>[];
@@ -47,52 +46,45 @@ export type CrudContractConfig<S> = {
 export type CrudContract<T extends TSchema, C extends CrudContractConfig<Static<T>>> = {
   get: {
     method: "GET";
-    path: MakePath<C["basePath"], C["params"]>;
+    path: MakePath<"", C["params"]>;
     params: TryPick<T, C["params"]>;
     response: TryOmit<T, C["hidden"]>;
   } & MetaField<EndpointMeta>;
   list: {
     method: "GET";
-    path: C["basePath"];
+    path: "/";
     response: TArray<TryOmit<T, C["hidden"]>>;
   } & MetaField<EndpointMeta>;
   create: {
     method: "POST";
-    path: C["basePath"];
+    path: "/";
     body: TryOmit<T, Merge2<C["hidden"], C["readonly"]>>;
     response: TryOmit<T, C["hidden"]>;
   } & MetaField<EndpointMeta>;
   update: {
     method: "PATCH";
-    path: MakePath<C["basePath"], C["params"]>;
+    path: MakePath<"", C["params"]>;
     params: TryPick<T, C["params"]>;
     body: TPartial<TryOmit<T, Merge3<C["hidden"], C["readonly"], C["immutable"]>>>;
     response: TryOmit<T, C["hidden"]>;
   } & MetaField<EndpointMeta>;
   delete: {
     method: "DELETE";
-    path: MakePath<C["basePath"], C["params"]>;
+    path: MakePath<"", C["params"]>;
     params: TryPick<T, C["params"]>;
     response: TryOmit<T, C["hidden"]>;
   } & MetaField<EndpointMeta>;
 };
 
-const normalizePath = (path: string): string => {
-  // transforms "\" to "/"
-  // removes duplicate separators
-  // enforces a leading slash
-  // removes any trailing slashes
-  return `/${path.replace(/\/{2,}|\\+/g, "/").replace(/(^\/)|(\/$)/, "")}`;
-};
-
-export const makeCrudContract = <T extends TSchema, const C extends CrudContractConfig<Static<T>>>(
+export const createCrud = <T extends TSchema, const C extends CrudContractConfig<Static<T>>>(
   schema: T,
   config: C,
 ): CrudContract<T, C> => {
-  const basePath = normalizePath(config.basePath);
-  const paramsPath = normalizePath(
-    `${basePath}/${config.params?.map((param) => `:${param.toString()}`).join("/") ?? ""}`,
-  ) as MakePath<C["basePath"], C["params"]>;
+  const paramsPath =
+    `/${config.params.map((param) => `:${param.toString()}`).join("/")}` as MakePath<
+      "",
+      C["params"]
+    >;
   const response = (config.hidden ? Type.Omit(schema, config.hidden) : schema) as TryOmit<
     T,
     C["hidden"]
@@ -106,11 +98,11 @@ export const makeCrudContract = <T extends TSchema, const C extends CrudContract
 
   return {
     get: { method: "GET", path: paramsPath, params, response, ...metaField },
-    list: { method: "GET", path: basePath, response: Type.Array(response), ...metaField },
+    list: { method: "GET", path: "/", response: Type.Array(response), ...metaField },
     delete: { method: "DELETE", path: paramsPath, params, response, ...metaField },
     create: {
       method: "POST",
-      path: basePath,
+      path: "/",
       response,
       body: Type.Omit(schema, [...hidden, ...ro]) as any,
       ...metaField,

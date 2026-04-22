@@ -1,13 +1,13 @@
 import { describe, expect, test, vi } from "vite-plus/test";
 import { Type } from "typebox";
-import { makeContract } from "../contract";
+import { createContract } from "../contract";
 import { createFetchClient } from "../client";
 
 const mockFetch = vi.fn().mockResolvedValue({ id: "1", name: "Alice" });
 
 describe("createFetchClient", () => {
   test("constructs URL with basePath", async () => {
-    const contract = makeContract("/api/v1", {
+    const contract = createContract("/api/v1", {
       listUsers: {
         method: "GET",
         path: "/users",
@@ -29,7 +29,7 @@ describe("createFetchClient", () => {
   });
 
   test("constructs URL without basePath when default", async () => {
-    const contract = makeContract({
+    const contract = createContract({
       listUsers: {
         method: "GET",
         path: "/users",
@@ -51,7 +51,7 @@ describe("createFetchClient", () => {
   });
 
   test("replaces path params in URL", async () => {
-    const contract = makeContract("/api", {
+    const contract = createContract("/api", {
       getUser: {
         method: "GET",
         path: "/users/:id",
@@ -74,7 +74,7 @@ describe("createFetchClient", () => {
   });
 
   test("appends scalar query params to URL", async () => {
-    const contract = makeContract({
+    const contract = createContract({
       search: {
         method: "GET",
         path: "/search",
@@ -97,7 +97,7 @@ describe("createFetchClient", () => {
   });
 
   test("serializes array query params as repeated keys", async () => {
-    const contract = makeContract({
+    const contract = createContract({
       search: {
         method: "GET",
         path: "/search",
@@ -122,7 +122,7 @@ describe("createFetchClient", () => {
   });
 
   test("handles mixed scalar and array query params", async () => {
-    const contract = makeContract({
+    const contract = createContract({
       search: {
         method: "GET",
         path: "/search",
@@ -148,7 +148,7 @@ describe("createFetchClient", () => {
   });
 
   test("omits query string when no query provided", async () => {
-    const contract = makeContract({
+    const contract = createContract({
       listUsers: {
         method: "GET",
         path: "/users",

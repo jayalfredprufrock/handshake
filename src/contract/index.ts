@@ -1,2 +1,2 @@
-export * from "./make-contract";
-export * from "./make-crud-contract";
+export * from "./create-contract";
+export * from "./create-crud";

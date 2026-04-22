@@ -1,7 +1,7 @@
-import { makeContract } from "@jayalfredprufrock/handshake/contract";
+import { createContract } from "@jayalfredprufrock/handshake/contract";
 import { Type } from "typebox";
 
-export const contract = makeContract("/api", {
+export const contract = createContract("/api", {
   getUser: {
     method: "GET",
     path: "/users/:id",

@@ -1,10 +1,10 @@
 import { describe, expect, test } from "vite-plus/test";
 import { Type } from "typebox";
-import { makeContract } from "./make-contract";
+import { createContract } from "./create-contract";
 
-describe("makeContract", () => {
+describe("createContract", () => {
   test("creates contract with default basePath", () => {
-    const contract = makeContract({
+    const contract = createContract({
       getUser: {
         method: "GET",
         path: "/users/:id",
@@ -19,7 +19,7 @@ describe("makeContract", () => {
   });
 
   test("creates contract with explicit basePath", () => {
-    const contract = makeContract("/api/v1", {
+    const contract = createContract("/api/v1", {
       listUsers: {
         method: "GET",
         path: "/users",
@@ -32,7 +32,7 @@ describe("makeContract", () => {
   });
 
   test("preserves all endpoint properties", () => {
-    const contract = makeContract({
+    const contract = createContract({
       createUser: {
         method: "POST",
         path: "/users",

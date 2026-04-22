@@ -28,10 +28,10 @@ A contract describes every endpoint in your API: its HTTP method, path, path par
 
 ```ts
 // contract.ts
-import { makeContract } from "@jayalfredprufrock/handshake/contract";
+import { createContract } from "@jayalfredprufrock/handshake/contract";
 import { Type } from "typebox";
 
-export const contract = makeContract("/api", {
+export const contract = createContract("/api", {
   getUser: {
     method: "GET",
     path: "/users/:id",
@@ -78,7 +78,7 @@ export const contract = makeContract("/api", {
 });
 ```
 
-The first argument to `makeContract` is an optional base path that prefixes all endpoint paths. Omit it to default to `"/"`.
+The first argument to `createContract` is an optional base path that prefixes all endpoint paths. Omit it to default to `"/"`.
 
 ### 2. Create a Server
 
@@ -169,9 +169,9 @@ Authoring convention: give each sub-contract a `basePath` (e.g. `"/users"`) and 
 ```ts
 // contracts/users.ts — pure, no server imports
 import { Type } from "typebox";
-import { makeContract } from "@jayalfredprufrock/handshake/contract";
+import { createContract } from "@jayalfredprufrock/handshake/contract";
 
-export const usersContract = makeContract("/users", {
+export const usersContract = createContract("/users", {
   getUser: {
     method: "GET",
     path: "/:id",
@@ -232,11 +232,11 @@ For the client, compose a single contract with a plain object spread:
 
 ```ts
 // contracts/index.ts
-import { makeContract } from "@jayalfredprufrock/handshake/contract";
+import { createContract } from "@jayalfredprufrock/handshake/contract";
 import { usersContract } from "./users";
 import { postsContract } from "./posts";
 
-export const contract = makeContract("/api", {
+export const contract = createContract("/api", {
   ...usersContract.endpoints,
   ...postsContract.endpoints,
 });

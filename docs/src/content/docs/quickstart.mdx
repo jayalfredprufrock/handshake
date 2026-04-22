@@ -21,10 +21,10 @@ A contract describes every endpoint in your API. Create a shared file that both 
 
 ```ts
 // contract.ts
-import { makeContract } from "@jayalfredprufrock/handshake/contract";
+import { createContract } from "@jayalfredprufrock/handshake/contract";
 import { Type } from "typebox";
 
-export const contract = makeContract("/api", {
+export const contract = createContract("/api", {
   getUser: {
     method: "GET",
     path: "/users/:id",
