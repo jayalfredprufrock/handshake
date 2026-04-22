@@ -59,14 +59,6 @@ const methodMap = {
 
 export function implementContract<C extends ContractDef>(
   contract: C,
-  register: RouteRegister<C>,
-): RouteModule<C>;
-export function implementContract<C extends ContractDef>(
-  contract: C,
-  handlers: RouteHandlersMap<C>,
-): RouteModule<C>;
-export function implementContract<C extends ContractDef>(
-  contract: C,
   impl: RouteRegister<C> | RouteHandlersMap<C>,
 ): RouteModule<C> {
   return { contract, impl };

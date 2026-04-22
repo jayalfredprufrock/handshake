@@ -129,10 +129,10 @@ describe("implementContract", () => {
         getUser: ({ params }) => ({ id: params.id, name: "Alice" }),
       });
 
-      // @ts-expect-error — extra key not in contract
       implementContract(usersContract, {
         getUser: ({ params }) => ({ id: params.id, name: "Alice" }),
         listUsers: () => [],
+        // @ts-expect-error — extra key not in contract
         bogus: () => null,
       });
 
