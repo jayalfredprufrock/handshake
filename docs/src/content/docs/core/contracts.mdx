@@ -115,36 +115,38 @@ meta: { auth: "required", rateLimit: 100 }
 
 ## Splitting Contracts Across Files
 
-For larger APIs, you can define endpoints in separate files and combine them:
+For larger APIs, define each resource's contract in its own file and combine them with `combineContracts`:
 
 ```ts
-// users.ts
-export const userEndpoints = {
+// contracts/users.ts
+import { createContract } from "@jayalfredprufrock/handshake/contract";
+import { Type } from "typebox";
+
+export const usersContract = createContract("/users", {
   getUser: {
-    method: "GET" as const,
-    path: "/users/:id",
+    method: "GET",
+    path: "/:id",
     params: Type.Object({ id: Type.String() }),
     response: Type.Object({ id: Type.String(), name: Type.String() }),
   },
   listUsers: {
-    method: "GET" as const,
-    path: "/users",
+    method: "GET",
+    path: "/",
     response: Type.Array(Type.Object({ id: Type.String(), name: Type.String() })),
   },
-};
+});
 ```
 
 ```ts
-// contract.ts
-import { createContract } from "@jayalfredprufrock/handshake/contract";
-import { userEndpoints } from "./users";
-import { postEndpoints } from "./posts";
+// contracts/index.ts
+import { combineContracts } from "@jayalfredprufrock/handshake/contract";
+import { usersContract } from "./users";
+import { postsContract } from "./posts";
 
-export const contract = createContract("/api", {
-  ...userEndpoints,
-  ...postEndpoints,
-});
+export const contract = combineContracts("/api", [usersContract, postsContract]);
 ```
+
+`combineContracts(basePath?, contracts[])` merges all endpoints into a single contract under the given top-level base path (defaults to `"/"`). Each endpoint's `path` is prefixed with its source contract's `basePath`, so the final URL resolves to `topBasePath + subBasePath + endpointPath`. If two sub-contracts declare the same endpoint name, `combineContracts` throws.
 
 ## The `ContractDef` Type
 

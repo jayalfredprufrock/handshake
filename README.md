@@ -228,18 +228,15 @@ root.use("*", logger()); // root-level middleware applies to every route
 const app = createHonoApp(root, [usersRoute, postsRoute]);
 ```
 
-For the client, compose a single contract with a plain object spread:
+For the client, compose a single contract with `combineContracts`. It merges the endpoints from each sub-contract, prefixing paths with each sub-contract's `basePath`, and throws if two sub-contracts define the same endpoint name:
 
 ```ts
 // contracts/index.ts
-import { createContract } from "@jayalfredprufrock/handshake/contract";
+import { combineContracts } from "@jayalfredprufrock/handshake/contract";
 import { usersContract } from "./users";
 import { postsContract } from "./posts";
 
-export const contract = createContract("/api", {
-  ...usersContract.endpoints,
-  ...postsContract.endpoints,
-});
+export const contract = combineContracts("/api", [usersContract, postsContract]);
 ```
 
 This barrel has zero server dependencies — safe to import from client bundles.

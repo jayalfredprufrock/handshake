@@ -116,4 +116,4 @@ const usersContract = createContract("/users", createCrud(User, { params: ["id"]
 const postsContract = createContract("/posts", createCrud(Post, { params: ["id"] }));
 ```
 
-Each resource produces its own contract with identical endpoint keys (`get`, `list`, …), so treat them as separate contracts rather than spreading them into a single one. Use `implementContract` and pass the resulting route modules to `createHonoApp` to serve them from the same app — see [Splitting contracts across files](/handshake/server/hono/).
+Each resource produces its own contract with identical endpoint keys (`get`, `list`, …), so two CRUD contracts can't be combined directly — `combineContracts` throws on the duplicate names. Keep each CRUD resource as its own contract and wire them up with [`implementContract`](/handshake/server/hono/) on the server; for the client, either build a client per resource or produce a single client by merging into a contract with uniquely-prefixed keys.
