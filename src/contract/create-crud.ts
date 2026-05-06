@@ -6,8 +6,8 @@ import {
   type TPartial,
   type TPick,
   type TSchema,
-  Type,
 } from "typebox";
+import * as T from "typebox";
 import type { EndpointMeta, MetaField } from "./create-contract";
 
 export type Merge2<A, B> = A extends string[]
@@ -85,11 +85,11 @@ export const createCrud = <T extends TSchema, const C extends CrudContractConfig
       "",
       C["params"]
     >;
-  const response = (config.hidden ? Type.Omit(schema, config.hidden) : schema) as TryOmit<
+  const response = (config.hidden ? T.Omit(schema, config.hidden) : schema) as TryOmit<
     T,
     C["hidden"]
   >;
-  const params = Type.Pick(schema, config.params) as any;
+  const params = T.Pick(schema, config.params) as any;
   const hidden = config.hidden ?? [];
   const ro = config.readonly ?? [];
   const immutable = config.immutable ?? [];
@@ -98,13 +98,13 @@ export const createCrud = <T extends TSchema, const C extends CrudContractConfig
 
   return {
     get: { method: "GET", path: paramsPath, params, response, ...metaField },
-    list: { method: "GET", path: "/", response: Type.Array(response), ...metaField },
+    list: { method: "GET", path: "/", response: T.Array(response), ...metaField },
     delete: { method: "DELETE", path: paramsPath, params, response, ...metaField },
     create: {
       method: "POST",
       path: "/",
       response,
-      body: Type.Omit(schema, [...hidden, ...ro]) as any,
+      body: T.Omit(schema, [...hidden, ...ro]) as any,
       ...metaField,
     },
     update: {
@@ -112,7 +112,7 @@ export const createCrud = <T extends TSchema, const C extends CrudContractConfig
       path: paramsPath,
       response,
       params,
-      body: Type.Partial(Type.Omit(schema, [...hidden, ...ro, ...immutable])) as any,
+      body: T.Partial(T.Omit(schema, [...hidden, ...ro, ...immutable])) as any,
       ...metaField,
     },
   } as CrudContract<T, C>;

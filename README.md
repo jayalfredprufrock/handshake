@@ -138,6 +138,10 @@ const api = createHonoApp(contract, { validateResponse: false });
 api.implement("listUsers", () => [...users.values()], { validateResponse: false });
 ```
 
+#### Route ordering
+
+At `build()`, routes are sorted by path specificity before being registered on Hono — literal segments take precedence over `:param` segments at the same position. This means a contract with `/users/:id` and `/users/me` resolves `/users/me` to the literal handler regardless of the order the endpoints appear in the contract. Within each specificity tier, registration order is preserved.
+
 #### Bringing your own Hono app
 
 Pass an existing `Hono` instance as the first argument to register the contract routes on it. This is the way to attach middleware or non-contract routes, and the app's `Env` generic (Bindings/Variables) is threaded through to `c` in every handler so `c.env` and `c.var` are fully typed.

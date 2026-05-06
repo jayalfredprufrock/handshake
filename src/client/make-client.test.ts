@@ -1,5 +1,5 @@
 import { describe, expect, test, vi } from "vite-plus/test";
-import { Type } from "typebox";
+import * as T from "typebox";
 import { createContract } from "../contract";
 import { createFetchClient } from "../client";
 
@@ -11,7 +11,7 @@ describe("createFetchClient", () => {
       listUsers: {
         method: "GET",
         path: "/users",
-        response: Type.Array(Type.Object({ id: Type.String() })),
+        response: T.Array(T.Object({ id: T.String() })),
       },
     });
 
@@ -33,7 +33,7 @@ describe("createFetchClient", () => {
       listUsers: {
         method: "GET",
         path: "/users",
-        response: Type.Array(Type.Object({ id: Type.String() })),
+        response: T.Array(T.Object({ id: T.String() })),
       },
     });
 
@@ -55,8 +55,8 @@ describe("createFetchClient", () => {
       getUser: {
         method: "GET",
         path: "/users/:id",
-        params: Type.Object({ id: Type.String() }),
-        response: Type.Object({ id: Type.String() }),
+        params: T.Object({ id: T.String() }),
+        response: T.Object({ id: T.String() }),
       },
     });
 
@@ -78,8 +78,8 @@ describe("createFetchClient", () => {
       search: {
         method: "GET",
         path: "/search",
-        query: Type.Object({ q: Type.String(), limit: Type.Number() }),
-        response: Type.Object({ q: Type.String() }),
+        query: T.Object({ q: T.String(), limit: T.Number() }),
+        response: T.Object({ q: T.String() }),
       },
     });
 
@@ -101,10 +101,10 @@ describe("createFetchClient", () => {
       search: {
         method: "GET",
         path: "/search",
-        query: Type.Object({
-          tags: Type.Array(Type.String()),
+        query: T.Object({
+          tags: T.Array(T.String()),
         }),
-        response: Type.Object({ tags: Type.Array(Type.String()) }),
+        response: T.Object({ tags: T.Array(T.String()) }),
       },
     });
 
@@ -126,11 +126,11 @@ describe("createFetchClient", () => {
       search: {
         method: "GET",
         path: "/search",
-        query: Type.Object({
-          q: Type.String(),
-          tags: Type.Array(Type.String()),
+        query: T.Object({
+          q: T.String(),
+          tags: T.Array(T.String()),
         }),
-        response: Type.Object({ q: Type.String() }),
+        response: T.Object({ q: T.String() }),
       },
     });
 
@@ -152,8 +152,8 @@ describe("createFetchClient", () => {
       listUsers: {
         method: "GET",
         path: "/users",
-        query: Type.Object({ limit: Type.Optional(Type.Number()) }),
-        response: Type.Array(Type.Object({ id: Type.String() })),
+        query: T.Object({ limit: T.Optional(T.Number()) }),
+        response: T.Array(T.Object({ id: T.String() })),
       },
     });
 

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vite-plus/test";
-import { Type } from "typebox";
+import * as T from "typebox";
 import { createContract } from "./create-contract";
 
 describe("createContract", () => {
@@ -8,8 +8,8 @@ describe("createContract", () => {
       getUser: {
         method: "GET",
         path: "/users/:id",
-        params: Type.Object({ id: Type.String() }),
-        response: Type.Object({ id: Type.String(), name: Type.String() }),
+        params: T.Object({ id: T.String() }),
+        response: T.Object({ id: T.String(), name: T.String() }),
       },
     });
 
@@ -23,7 +23,7 @@ describe("createContract", () => {
       listUsers: {
         method: "GET",
         path: "/users",
-        response: Type.Array(Type.Object({ id: Type.String() })),
+        response: T.Array(T.Object({ id: T.String() })),
       },
     });
 
@@ -36,8 +36,8 @@ describe("createContract", () => {
       createUser: {
         method: "POST",
         path: "/users",
-        body: Type.Object({ name: Type.String() }),
-        response: Type.Object({ id: Type.String(), name: Type.String() }),
+        body: T.Object({ name: T.String() }),
+        response: T.Object({ id: T.String(), name: T.String() }),
         description: "Create a user",
         meta: { auth: true },
       },

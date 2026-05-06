@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vite-plus/test";
-import { Type } from "typebox";
+import * as T from "typebox";
 import { createContract } from "../contract";
 import type { AdapterFactory } from "./types";
 
@@ -8,33 +8,33 @@ export function runAdapterTests(createAdapter: AdapterFactory) {
     getUser: {
       method: "GET",
       path: "/users/:id",
-      params: Type.Object({ id: Type.String() }),
-      response: Type.Object({ id: Type.String(), name: Type.String() }),
+      params: T.Object({ id: T.String() }),
+      response: T.Object({ id: T.String(), name: T.String() }),
     },
     listUsers: {
       method: "GET",
       path: "/users",
-      query: Type.Object({ limit: Type.Optional(Type.String()) }),
-      response: Type.Array(Type.Object({ id: Type.String(), name: Type.String() })),
+      query: T.Object({ limit: T.Optional(T.String()) }),
+      response: T.Array(T.Object({ id: T.String(), name: T.String() })),
     },
     createUser: {
       method: "POST",
       path: "/users",
-      body: Type.Object({ name: Type.String() }),
-      response: Type.Object({ id: Type.String(), name: Type.String() }),
+      body: T.Object({ name: T.String() }),
+      response: T.Object({ id: T.String(), name: T.String() }),
     },
     updateUser: {
       method: "PATCH",
       path: "/users/:id",
-      params: Type.Object({ id: Type.String() }),
-      body: Type.Object({ name: Type.Optional(Type.String()) }),
-      response: Type.Object({ id: Type.String(), name: Type.String() }),
+      params: T.Object({ id: T.String() }),
+      body: T.Object({ name: T.Optional(T.String()) }),
+      response: T.Object({ id: T.String(), name: T.String() }),
     },
     deleteUser: {
       method: "DELETE",
       path: "/users/:id",
-      params: Type.Object({ id: Type.String() }),
-      response: Type.Object({ id: Type.String() }),
+      params: T.Object({ id: T.String() }),
+      response: T.Object({ id: T.String() }),
     },
   });
 
@@ -104,7 +104,7 @@ export function runAdapterTests(createAdapter: AdapterFactory) {
           health: {
             method: "GET",
             path: "/health",
-            response: Type.Object({ ok: Type.Boolean() }),
+            response: T.Object({ ok: T.Boolean() }),
           },
         });
 
@@ -165,14 +165,14 @@ export function runAdapterTests(createAdapter: AdapterFactory) {
         getItem: {
           method: "GET",
           path: "/items/:id",
-          params: Type.Object({ id: Type.Number() }),
-          response: Type.Object({ id: Type.Number() }),
+          params: T.Object({ id: T.Number() }),
+          response: T.Object({ id: T.Number() }),
         },
         getItemVersion: {
           method: "GET",
           path: "/items/:id/versions/:version",
-          params: Type.Object({ id: Type.Number(), version: Type.Number() }),
-          response: Type.Object({ id: Type.Number(), version: Type.Number() }),
+          params: T.Object({ id: T.Number(), version: T.Number() }),
+          response: T.Object({ id: T.Number(), version: T.Number() }),
         },
       });
 
@@ -232,8 +232,8 @@ export function runAdapterTests(createAdapter: AdapterFactory) {
           getItem: {
             method: "GET",
             path: "/items/:id",
-            params: Type.Object({ id: Type.Integer() }),
-            response: Type.Object({ id: Type.Integer() }),
+            params: T.Object({ id: T.Integer() }),
+            response: T.Object({ id: T.Integer() }),
           },
         });
 
@@ -251,8 +251,8 @@ export function runAdapterTests(createAdapter: AdapterFactory) {
           getFlag: {
             method: "GET",
             path: "/flags/:enabled",
-            params: Type.Object({ enabled: Type.Boolean() }),
-            response: Type.Object({ enabled: Type.Boolean() }),
+            params: T.Object({ enabled: T.Boolean() }),
+            response: T.Object({ enabled: T.Boolean() }),
           },
         });
 
@@ -271,15 +271,15 @@ export function runAdapterTests(createAdapter: AdapterFactory) {
         search: {
           method: "GET",
           path: "/search",
-          query: Type.Object({
-            q: Type.String(),
-            page: Type.Number(),
-            limit: Type.Number(),
+          query: T.Object({
+            q: T.String(),
+            page: T.Number(),
+            limit: T.Number(),
           }),
-          response: Type.Object({
-            q: Type.String(),
-            page: Type.Number(),
-            limit: Type.Number(),
+          response: T.Object({
+            q: T.String(),
+            page: T.Number(),
+            limit: T.Number(),
           }),
         },
       });
@@ -329,8 +329,8 @@ export function runAdapterTests(createAdapter: AdapterFactory) {
           list: {
             method: "GET",
             path: "/items",
-            query: Type.Object({ active: Type.Boolean() }),
-            response: Type.Object({ active: Type.Boolean() }),
+            query: T.Object({ active: T.Boolean() }),
+            response: T.Object({ active: T.Boolean() }),
           },
         });
 
@@ -357,8 +357,8 @@ export function runAdapterTests(createAdapter: AdapterFactory) {
           search: {
             method: "GET",
             path: "/search",
-            query: Type.Object({ tags: Type.Array(Type.String()) }),
-            response: Type.Object({ tags: Type.Array(Type.String()) }),
+            query: T.Object({ tags: T.Array(T.String()) }),
+            response: T.Object({ tags: T.Array(T.String()) }),
           },
         });
 
@@ -376,8 +376,8 @@ export function runAdapterTests(createAdapter: AdapterFactory) {
           search: {
             method: "GET",
             path: "/search",
-            query: Type.Object({ tags: Type.Array(Type.String()) }),
-            response: Type.Object({ tags: Type.Array(Type.String()) }),
+            query: T.Object({ tags: T.Array(T.String()) }),
+            response: T.Object({ tags: T.Array(T.String()) }),
           },
         });
 
@@ -395,8 +395,8 @@ export function runAdapterTests(createAdapter: AdapterFactory) {
           getMany: {
             method: "GET",
             path: "/items",
-            query: Type.Object({ ids: Type.Array(Type.Number()) }),
-            response: Type.Object({ ids: Type.Array(Type.Number()) }),
+            query: T.Object({ ids: T.Array(T.Number()) }),
+            response: T.Object({ ids: T.Array(T.Number()) }),
           },
         });
 
@@ -427,15 +427,15 @@ export function runAdapterTests(createAdapter: AdapterFactory) {
           search: {
             method: "GET",
             path: "/search",
-            query: Type.Object({
-              q: Type.String(),
-              tags: Type.Array(Type.String()),
-              limit: Type.Number(),
+            query: T.Object({
+              q: T.String(),
+              tags: T.Array(T.String()),
+              limit: T.Number(),
             }),
-            response: Type.Object({
-              q: Type.String(),
-              tags: Type.Array(Type.String()),
-              limit: Type.Number(),
+            response: T.Object({
+              q: T.String(),
+              tags: T.Array(T.String()),
+              limit: T.Number(),
             }),
           },
         });
@@ -531,8 +531,8 @@ export function runAdapterTests(createAdapter: AdapterFactory) {
         getUser: {
           method: "GET",
           path: "/users/:id",
-          params: Type.Object({ id: Type.String() }),
-          response: Type.Object({ id: Type.String(), name: Type.String() }),
+          params: T.Object({ id: T.String() }),
+          response: T.Object({ id: T.String(), name: T.String() }),
         },
       });
 

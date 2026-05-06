@@ -1,20 +1,20 @@
 import type { TSchema } from "typebox";
-import { Assert, AssertError, Clean, Convert, Default, Pipeline } from "typebox/value";
+import * as T from "typebox/value";
 
 function assertAndReturn(_context: object, type: TSchema, value: unknown): unknown {
-  Assert(type, value);
+  T.Assert(type, value);
   return value;
 }
 
-const paramsPipeline = Pipeline([
-  (_context, type, value) => Default(type, value),
-  (_context, type, value) => Convert(type, value),
+const paramsPipeline = T.Pipeline([
+  (_context, type, value) => T.Default(type, value),
+  (_context, type, value) => T.Convert(type, value),
   assertAndReturn,
 ]);
 
-const queryPipeline = Pipeline([
-  (_context, type, value) => Default(type, value),
-  (_context, type, value) => Convert(type, value),
+const queryPipeline = T.Pipeline([
+  (_context, type, value) => T.Default(type, value),
+  (_context, type, value) => T.Convert(type, value),
   assertAndReturn,
 ]);
 
@@ -73,8 +73,8 @@ export function parseQuery(schema: TSchema, raw: Record<string, string[]>): unkn
  * Rejects missing or extra properties. No coercion is performed.
  */
 export function parseBody(schema: TSchema, raw: unknown): unknown {
-  const value = Default(schema, raw);
-  Assert({ ...schema, additionalProperties: false } as TSchema, value);
+  const value = T.Default(schema, raw);
+  T.Assert({ ...schema, additionalProperties: false } as TSchema, value);
   return value;
 }
 
@@ -84,9 +84,11 @@ export function parseBody(schema: TSchema, raw: unknown): unknown {
  * don't match the expected types.
  */
 export function parseResponse(schema: TSchema, raw: unknown): unknown {
-  const value = Clean(schema, raw);
-  Assert(schema, value);
+  const value = T.Clean(schema, raw);
+  T.Assert(schema, value);
   return value;
 }
+
+const AssertError = T.AssertError;
 
 export { AssertError };

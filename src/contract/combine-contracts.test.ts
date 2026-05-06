@@ -1,5 +1,5 @@
 import { describe, expect, expectTypeOf, test } from "vite-plus/test";
-import { Type } from "typebox";
+import * as T from "typebox";
 import { combineContracts } from "./combine-contracts";
 import { createContract } from "./create-contract";
 
@@ -7,13 +7,13 @@ const users = createContract("/users", {
   getUser: {
     method: "GET",
     path: "/:id",
-    params: Type.Object({ id: Type.String() }),
-    response: Type.Object({ id: Type.String(), name: Type.String() }),
+    params: T.Object({ id: T.String() }),
+    response: T.Object({ id: T.String(), name: T.String() }),
   },
   listUsers: {
     method: "GET",
     path: "/",
-    response: Type.Array(Type.Object({ id: Type.String(), name: Type.String() })),
+    response: T.Array(T.Object({ id: T.String(), name: T.String() })),
   },
 });
 
@@ -21,8 +21,8 @@ const posts = createContract("/posts", {
   getPost: {
     method: "GET",
     path: "/:id",
-    params: Type.Object({ id: Type.String() }),
-    response: Type.Object({ id: Type.String(), title: Type.String() }),
+    params: T.Object({ id: T.String() }),
+    response: T.Object({ id: T.String(), title: T.String() }),
   },
 });
 
@@ -54,7 +54,7 @@ describe("combineContracts", () => {
       health: {
         method: "GET",
         path: "/health",
-        response: Type.Object({ ok: Type.Boolean() }),
+        response: T.Object({ ok: T.Boolean() }),
       },
     });
     const combined = combineContracts([root]);
@@ -73,14 +73,14 @@ describe("combineContracts", () => {
       shared: {
         method: "GET",
         path: "/",
-        response: Type.Object({ source: Type.Literal("a") }),
+        response: T.Object({ source: T.Literal("a") }),
       },
     });
     const b = createContract("/b", {
       shared: {
         method: "GET",
         path: "/",
-        response: Type.Object({ source: Type.Literal("b") }),
+        response: T.Object({ source: T.Literal("b") }),
       },
     });
     expect(() => combineContracts([a, b])).toThrow(/Duplicate endpoint name "shared"/);

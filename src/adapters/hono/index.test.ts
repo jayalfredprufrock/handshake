@@ -1,5 +1,5 @@
 import { describe, expect, expectTypeOf, test } from "vite-plus/test";
-import { Type } from "typebox";
+import * as T from "typebox";
 import type { Static } from "typebox";
 import { Hono } from "hono";
 import { createContract } from "../../contract";
@@ -9,14 +9,14 @@ const contract = createContract("/api", {
   getUser: {
     method: "GET",
     path: "/users/:id",
-    params: Type.Object({ id: Type.String() }),
-    response: Type.Object({ id: Type.String(), name: Type.String() }),
+    params: T.Object({ id: T.String() }),
+    response: T.Object({ id: T.String(), name: T.String() }),
   },
   createUser: {
     method: "POST",
     path: "/users",
-    body: Type.Object({ name: Type.String() }),
-    response: Type.Object({ id: Type.String(), name: Type.String() }),
+    body: T.Object({ name: T.String() }),
+    response: T.Object({ id: T.String(), name: T.String() }),
   },
 });
 

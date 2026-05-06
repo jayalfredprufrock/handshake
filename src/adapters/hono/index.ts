@@ -57,6 +57,24 @@ const methodMap = {
   DELETE: "delete",
 } as const;
 
+function compareSpecificity(a: string, b: string): number {
+  const aSegs = a.split("/");
+  const bSegs = b.split("/");
+  const max = Math.max(aSegs.length, bSegs.length);
+  for (let i = 0; i < max; i++) {
+    const aSeg = aSegs[i];
+    const bSeg = bSegs[i];
+    if (aSeg === bSeg) continue;
+    if (aSeg === undefined) return -1;
+    if (bSeg === undefined) return 1;
+    const aParam = aSeg.startsWith(":");
+    const bParam = bSeg.startsWith(":");
+    if (aParam !== bParam) return aParam ? 1 : -1;
+    return 0;
+  }
+  return 0;
+}
+
 export function implementContract<C extends ContractDef>(
   contract: C,
   impl: RouteRegister<C> | RouteHandlersMap<C>,
@@ -134,7 +152,11 @@ function createSingleContractApp(
       const app = providedApp ?? new Hono();
       const basePath = options.basePath ?? registry.basePath;
 
-      for (const [name, endpoint] of registry.entries) {
+      const sorted = [...registry.entries].sort(([, a], [, b]) =>
+        compareSpecificity(a.path, b.path),
+      );
+
+      for (const [name, endpoint] of sorted) {
         const handler = registry.getHandler(name);
         const handlerOptions = registry.getHandlerOptions(name);
         const method = methodMap[endpoint.method];

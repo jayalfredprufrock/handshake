@@ -1,6 +1,6 @@
 import { describe, expect, expectTypeOf, test } from "vite-plus/test";
 import { Hono } from "hono";
-import { Type } from "typebox";
+import * as T from "typebox";
 import { createContract } from "../../contract";
 import { createHonoApp, implementContract } from "./index";
 
@@ -8,13 +8,13 @@ const usersContract = createContract("/users", {
   getUser: {
     method: "GET",
     path: "/:id",
-    params: Type.Object({ id: Type.String() }),
-    response: Type.Object({ id: Type.String(), name: Type.String() }),
+    params: T.Object({ id: T.String() }),
+    response: T.Object({ id: T.String(), name: T.String() }),
   },
   listUsers: {
     method: "GET",
     path: "/",
-    response: Type.Array(Type.Object({ id: Type.String(), name: Type.String() })),
+    response: T.Array(T.Object({ id: T.String(), name: T.String() })),
   },
 });
 
@@ -22,8 +22,8 @@ const postsContract = createContract("/posts", {
   getPost: {
     method: "GET",
     path: "/:id",
-    params: Type.Object({ id: Type.String() }),
-    response: Type.Object({ id: Type.String(), title: Type.String() }),
+    params: T.Object({ id: T.String() }),
+    response: T.Object({ id: T.String(), title: T.String() }),
   },
 });
 
