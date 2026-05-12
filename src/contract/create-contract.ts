@@ -36,6 +36,15 @@ export function createContract(
   return { basePath: "/", endpoints: basePathOrEndpoints };
 }
 
+export type ContractSchema<C extends Contract> = {
+  [E in keyof C["endpoints"]]: {
+    body: InferSchema<C["endpoints"][E]["body"]>;
+    response: InferSchema<C["endpoints"][E]["response"]>;
+    params: InferSchema<C["endpoints"][E]["params"]>;
+    query: InferSchema<C["endpoints"][E]["query"]>;
+  };
+};
+
 export type ContractBody<C extends Contract> = {
   [E in keyof C["endpoints"]]: InferSchema<C["endpoints"][E]["body"]>;
 };
