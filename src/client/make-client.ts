@@ -1,5 +1,5 @@
 import type { Static, TSchema } from "typebox";
-import type { ContractDef, Endpoint } from "../contract";
+import type { Contract, Endpoint } from "../contract";
 
 // TODO: this could handle the "none" case too and resolve to never
 export type InferSchema<S> = S extends TSchema ? Static<S> : any;
@@ -91,7 +91,7 @@ export interface FetchClientConfig {
 }
 
 export const createFetchClient = <C extends Record<string, Endpoint>>(
-  contract: ContractDef<C>,
+  contract: Contract<C>,
   config: FetchClientConfig,
 ): Client<C> => {
   const basePath = contract.basePath === "/" ? "" : contract.basePath;

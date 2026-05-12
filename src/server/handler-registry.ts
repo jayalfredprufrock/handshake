@@ -1,4 +1,4 @@
-import type { ContractDef, Endpoint } from "../contract";
+import type { Contract, Endpoint } from "../contract";
 import type { HandlerOptions } from "./types";
 
 export class HandlerRegistry {
@@ -7,9 +7,9 @@ export class HandlerRegistry {
     { handler: (...args: any[]) => any; options?: HandlerOptions }
   >();
   private endpointNames: Set<string>;
-  private contract: ContractDef;
+  private contract: Contract;
 
-  constructor(contract: ContractDef) {
+  constructor(contract: Contract) {
     this.contract = contract;
     this.endpointNames = new Set(Object.keys(contract.endpoints));
   }

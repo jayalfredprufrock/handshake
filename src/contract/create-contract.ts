@@ -16,26 +16,38 @@ export type Endpoint = {
   description?: string;
 } & MetaField<EndpointMeta>;
 
-export interface ContractDef<C extends Record<string, Endpoint> = Record<string, Endpoint>> {
+export interface Contract<C extends Record<string, Endpoint> = Record<string, Endpoint>> {
   basePath: string;
   endpoints: C;
 }
 
-export type Contract = ContractDef;
-
-export function createContract<const C extends Record<string, Endpoint>>(
-  endpoints: C,
-): ContractDef<C>;
+export function createContract<const C extends Record<string, Endpoint>>(endpoints: C): Contract<C>;
 export function createContract<const C extends Record<string, Endpoint>>(
   basePath: string,
   endpoints: C,
-): ContractDef<C>;
+): Contract<C>;
 export function createContract(
   basePathOrEndpoints: string | Record<string, Endpoint>,
   maybeEndpoints?: Record<string, Endpoint>,
-): ContractDef {
+): Contract {
   if (typeof basePathOrEndpoints === "string") {
     return { basePath: basePathOrEndpoints, endpoints: maybeEndpoints! };
   }
   return { basePath: "/", endpoints: basePathOrEndpoints };
 }
+
+export type ContractBody<C extends Contract> = {
+  [E in keyof C["endpoints"]]: InferSchema<C["endpoints"][E]["body"]>;
+};
+
+export type ContractResponse<C extends Contract> = {
+  [E in keyof C["endpoints"]]: InferSchema<C["endpoints"][E]["response"]>;
+};
+
+export type ContractParams<C extends Contract> = {
+  [E in keyof C["endpoints"]]: InferSchema<C["endpoints"][E]["params"]>;
+};
+
+export type ContractQuery<C extends Contract> = {
+  [E in keyof C["endpoints"]]: InferSchema<C["endpoints"][E]["query"]>;
+};

@@ -1,5 +1,5 @@
 import type { Static, TSchema } from "typebox";
-import type { ContractDef, Endpoint, InferSchema } from "../contract";
+import type { Contract, Endpoint, InferSchema } from "../contract";
 
 export type BaseHandlerInput<E extends Endpoint> = (E["params"] extends TSchema
   ? { params: Static<E["params"]> }
@@ -24,7 +24,4 @@ export interface AdapterTestHarness {
   build(): { request(url: string, init?: RequestInit): Promise<Response> };
 }
 
-export type AdapterFactory = (
-  contract: ContractDef,
-  options?: AdapterOptions,
-) => AdapterTestHarness;
+export type AdapterFactory = (contract: Contract, options?: AdapterOptions) => AdapterTestHarness;

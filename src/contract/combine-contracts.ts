@@ -1,12 +1,12 @@
-import type { ContractDef, Endpoint } from "./create-contract";
+import type { Contract, Endpoint } from "./create-contract";
 
 type UnionToIntersection<U> = (U extends any ? (x: U) => void : never) extends (x: infer I) => void
   ? I
   : never;
 
-type EndpointsOf<C> = C extends ContractDef<infer E> ? E : never;
+type EndpointsOf<C> = C extends Contract<infer E> ? E : never;
 
-type MergedEndpoints<T extends readonly ContractDef[]> =
+type MergedEndpoints<T extends readonly Contract[]> =
   UnionToIntersection<EndpointsOf<T[number]>> extends infer M
     ? M extends Record<string, Endpoint>
       ? M
@@ -20,22 +20,22 @@ function joinPath(base: string, path: string): string {
   return joined === "" ? "/" : joined;
 }
 
-export function combineContracts<const T extends readonly ContractDef[]>(
+export function combineContracts<const T extends readonly Contract[]>(
   contracts: T,
-): ContractDef<MergedEndpoints<T>>;
-export function combineContracts<const T extends readonly ContractDef[]>(
+): Contract<MergedEndpoints<T>>;
+export function combineContracts<const T extends readonly Contract[]>(
   basePath: string,
   contracts: T,
-): ContractDef<MergedEndpoints<T>>;
+): Contract<MergedEndpoints<T>>;
 export function combineContracts(
-  basePathOrContracts: string | readonly ContractDef[],
-  maybeContracts?: readonly ContractDef[],
-): ContractDef {
+  basePathOrContracts: string | readonly Contract[],
+  maybeContracts?: readonly Contract[],
+): Contract {
   const basePath = typeof basePathOrContracts === "string" ? basePathOrContracts : "/";
   const contracts =
     typeof basePathOrContracts === "string"
       ? maybeContracts!
-      : (basePathOrContracts as readonly ContractDef[]);
+      : (basePathOrContracts as readonly Contract[]);
 
   const endpoints: Record<string, Endpoint> = {};
   for (const contract of contracts) {
