@@ -20,17 +20,14 @@ describe("createContract", () => {
     expect(contract.endpoints.getUser.path).toBe("/users/:id");
   });
 
-  test("creates contract with basePath option", () => {
-    const contract = createContract(
-      {
-        listUsers: {
-          method: "GET",
-          path: "/users",
-          response: T.Array(T.Object({ id: T.String() })),
-        },
+  test("creates contract with basePath arg", () => {
+    const contract = createContract("/api/v1", {
+      listUsers: {
+        method: "GET",
+        path: "/users",
+        response: T.Array(T.Object({ id: T.String() })),
       },
-      { basePath: "/api/v1" },
-    );
+    });
 
     expect(contract.basePath).toBe("/api/v1");
     expect(contract.endpoints.listUsers.method).toBe("GET");

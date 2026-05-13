@@ -5,34 +5,28 @@ import { combineContracts } from "./combine-contracts";
 import { createContract } from "./create-contract";
 import type { ContractErrors } from "./create-contract";
 
-const users = createContract(
-  {
-    getUser: {
-      method: "GET",
-      path: "/:id",
-      params: T.Object({ id: T.String() }),
-      response: T.Object({ id: T.String(), name: T.String() }),
-    },
-    listUsers: {
-      method: "GET",
-      path: "/",
-      response: T.Array(T.Object({ id: T.String(), name: T.String() })),
-    },
+const users = createContract("/users", {
+  getUser: {
+    method: "GET",
+    path: "/:id",
+    params: T.Object({ id: T.String() }),
+    response: T.Object({ id: T.String(), name: T.String() }),
   },
-  { basePath: "/users" },
-);
+  listUsers: {
+    method: "GET",
+    path: "/",
+    response: T.Array(T.Object({ id: T.String(), name: T.String() })),
+  },
+});
 
-const posts = createContract(
-  {
-    getPost: {
-      method: "GET",
-      path: "/:id",
-      params: T.Object({ id: T.String() }),
-      response: T.Object({ id: T.String(), title: T.String() }),
-    },
+const posts = createContract("/posts", {
+  getPost: {
+    method: "GET",
+    path: "/:id",
+    params: T.Object({ id: T.String() }),
+    response: T.Object({ id: T.String(), title: T.String() }),
   },
-  { basePath: "/posts" },
-);
+});
 
 describe("combineContracts", () => {
   test("defaults basePath to '/' when omitted", () => {
@@ -77,26 +71,20 @@ describe("combineContracts", () => {
   });
 
   test("throws on duplicate endpoint names", () => {
-    const a = createContract(
-      {
-        shared: {
-          method: "GET",
-          path: "/",
-          response: T.Object({ source: T.Literal("a") }),
-        },
+    const a = createContract("/a", {
+      shared: {
+        method: "GET",
+        path: "/",
+        response: T.Object({ source: T.Literal("a") }),
       },
-      { basePath: "/a" },
-    );
-    const b = createContract(
-      {
-        shared: {
-          method: "GET",
-          path: "/",
-          response: T.Object({ source: T.Literal("b") }),
-        },
+    });
+    const b = createContract("/b", {
+      shared: {
+        method: "GET",
+        path: "/",
+        response: T.Object({ source: T.Literal("b") }),
       },
-      { basePath: "/b" },
-    );
+    });
     expect(() => combineContracts([a, b])).toThrow(/Duplicate endpoint name "shared"/);
   });
 

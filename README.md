@@ -31,57 +31,54 @@ A contract describes every endpoint in your API: its HTTP method, path, path par
 import { createContract } from "@jayalfredprufrock/handshake/contract";
 import { Type } from "typebox";
 
-export const contract = createContract(
-  {
-    getUser: {
-      method: "GET",
-      path: "/users/:id",
-      params: Type.Object({ id: Type.String() }),
-      response: Type.Object({
-        id: Type.String(),
-        name: Type.String(),
-        email: Type.String(),
-      }),
-    },
-
-    listUsers: {
-      method: "GET",
-      path: "/users",
-      response: Type.Array(
-        Type.Object({
-          id: Type.String(),
-          name: Type.String(),
-          email: Type.String(),
-        }),
-      ),
-    },
-
-    createUser: {
-      method: "POST",
-      path: "/users",
-      body: Type.Object({
-        name: Type.String(),
-        email: Type.String(),
-      }),
-      response: Type.Object({
-        id: Type.String(),
-        name: Type.String(),
-        email: Type.String(),
-      }),
-    },
-
-    deleteUser: {
-      method: "DELETE",
-      path: "/users/:id",
-      params: Type.Object({ id: Type.String() }),
-      response: Type.Object({ id: Type.String() }),
-    },
+export const contract = createContract("/api", {
+  getUser: {
+    method: "GET",
+    path: "/users/:id",
+    params: Type.Object({ id: Type.String() }),
+    response: Type.Object({
+      id: Type.String(),
+      name: Type.String(),
+      email: Type.String(),
+    }),
   },
-  { basePath: "/api" },
-);
+
+  listUsers: {
+    method: "GET",
+    path: "/users",
+    response: Type.Array(
+      Type.Object({
+        id: Type.String(),
+        name: Type.String(),
+        email: Type.String(),
+      }),
+    ),
+  },
+
+  createUser: {
+    method: "POST",
+    path: "/users",
+    body: Type.Object({
+      name: Type.String(),
+      email: Type.String(),
+    }),
+    response: Type.Object({
+      id: Type.String(),
+      name: Type.String(),
+      email: Type.String(),
+    }),
+  },
+
+  deleteUser: {
+    method: "DELETE",
+    path: "/users/:id",
+    params: Type.Object({ id: Type.String() }),
+    response: Type.Object({ id: Type.String() }),
+  },
+});
 ```
 
-The second argument is an optional options object. `basePath` prefixes all endpoint paths and defaults to `"/"`.
+The first argument is an optional base path that prefixes all endpoint paths (defaults to `"/"`). Pass only the endpoints object to omit it.
 
 ### 2. Create a Server
 
@@ -188,22 +185,19 @@ For larger apps, define each resource as its own contract and combine them. Use 
 import { createContract } from "@jayalfredprufrock/handshake/contract";
 import { Type } from "typebox";
 
-export const usersContract = createContract(
-  {
-    getUser: {
-      method: "GET",
-      path: "/:id",
-      params: Type.Object({ id: Type.String() }),
-      response: Type.Object({ id: Type.String(), name: Type.String() }),
-    },
-    listUsers: {
-      method: "GET",
-      path: "/",
-      response: Type.Array(Type.Object({ id: Type.String(), name: Type.String() })),
-    },
+export const usersContract = createContract("/users", {
+  getUser: {
+    method: "GET",
+    path: "/:id",
+    params: Type.Object({ id: Type.String() }),
+    response: Type.Object({ id: Type.String(), name: Type.String() }),
   },
-  { basePath: "/users" },
-);
+  listUsers: {
+    method: "GET",
+    path: "/",
+    response: Type.Array(Type.Object({ id: Type.String(), name: Type.String() })),
+  },
+});
 ```
 
 ```ts
@@ -292,18 +286,15 @@ Declare the errors an endpoint can return using `errors`. On the client, each en
 import { Type } from "typebox";
 import { createContract } from "@jayalfredprufrock/handshake/contract";
 
-export const usersContract = createContract(
-  {
-    getUser: {
-      method: "GET",
-      path: "/:id",
-      params: Type.Object({ id: Type.String() }),
-      response: Type.Object({ id: Type.String(), name: Type.String() }),
-      errors: Type.Object({ code: Type.Literal("NOT_FOUND") }),
-    },
+export const usersContract = createContract("/users", {
+  getUser: {
+    method: "GET",
+    path: "/:id",
+    params: Type.Object({ id: Type.String() }),
+    response: Type.Object({ id: Type.String(), name: Type.String() }),
+    errors: Type.Object({ code: Type.Literal("NOT_FOUND") }),
   },
-  { basePath: "/users" },
-);
+});
 ```
 
 On the server, throw an `ApiError` — it is passed through to the client automatically when its body matches the declared errors:

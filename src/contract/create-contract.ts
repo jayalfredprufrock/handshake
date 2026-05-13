@@ -29,7 +29,6 @@ export interface Contract<
 }
 
 export interface ContractOptions<G extends TSchema | undefined = undefined> {
-  basePath?: string;
   globalErrors?: G;
 }
 
@@ -38,14 +37,30 @@ export function createContract<
   const C extends Record<string, Endpoint>,
   G extends TSchema | undefined = undefined,
 >(endpoints: C, options: ContractOptions<G>): Contract<C, G>;
+export function createContract<const C extends Record<string, Endpoint>>(
+  basePath: string,
+  endpoints: C,
+): Contract<C>;
+export function createContract<
+  const C extends Record<string, Endpoint>,
+  G extends TSchema | undefined = undefined,
+>(basePath: string, endpoints: C, options: ContractOptions<G>): Contract<C, G>;
 export function createContract(
-  endpoints: Record<string, Endpoint>,
-  options?: ContractOptions<any>,
+  basePathOrEndpoints: string | Record<string, Endpoint>,
+  endpointsOrOptions?: Record<string, Endpoint> | ContractOptions<any>,
+  maybeOptions?: ContractOptions<any>,
 ): Contract {
+  if (typeof basePathOrEndpoints === "string") {
+    return {
+      basePath: basePathOrEndpoints,
+      endpoints: endpointsOrOptions as Record<string, Endpoint>,
+      globalErrors: maybeOptions?.globalErrors,
+    };
+  }
   return {
-    basePath: options?.basePath ?? "/",
-    endpoints,
-    globalErrors: options?.globalErrors,
+    basePath: "/",
+    endpoints: basePathOrEndpoints,
+    globalErrors: (endpointsOrOptions as ContractOptions<any> | undefined)?.globalErrors,
   };
 }
 

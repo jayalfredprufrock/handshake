@@ -5,22 +5,19 @@ import { implementContract, createHonoApp } from "./index";
 
 describe("route ordering", () => {
   test("literal segment wins over param at the same position", async () => {
-    const contract = createContract(
-      {
-        getUser: {
-          method: "GET",
-          path: "/:id",
-          params: T.Object({ id: T.String() }),
-          response: T.Object({ source: T.Literal("param"), id: T.String() }),
-        },
-        getMe: {
-          method: "GET",
-          path: "/me",
-          response: T.Object({ source: T.Literal("literal"), id: T.Literal("me") }),
-        },
+    const contract = createContract("/users", {
+      getUser: {
+        method: "GET",
+        path: "/:id",
+        params: T.Object({ id: T.String() }),
+        response: T.Object({ source: T.Literal("param"), id: T.String() }),
       },
-      { basePath: "/users" },
-    );
+      getMe: {
+        method: "GET",
+        path: "/me",
+        response: T.Object({ source: T.Literal("literal"), id: T.Literal("me") }),
+      },
+    });
 
     const module = implementContract(contract, {
       getUser: ({ params }) => ({ source: "param" as const, id: params.id }),
@@ -34,22 +31,19 @@ describe("route ordering", () => {
   });
 
   test("still matches param routes for non-literal values", async () => {
-    const contract = createContract(
-      {
-        getUser: {
-          method: "GET",
-          path: "/:id",
-          params: T.Object({ id: T.String() }),
-          response: T.Object({ source: T.Literal("param"), id: T.String() }),
-        },
-        getMe: {
-          method: "GET",
-          path: "/me",
-          response: T.Object({ source: T.Literal("literal"), id: T.Literal("me") }),
-        },
+    const contract = createContract("/users", {
+      getUser: {
+        method: "GET",
+        path: "/:id",
+        params: T.Object({ id: T.String() }),
+        response: T.Object({ source: T.Literal("param"), id: T.String() }),
       },
-      { basePath: "/users" },
-    );
+      getMe: {
+        method: "GET",
+        path: "/me",
+        response: T.Object({ source: T.Literal("literal"), id: T.Literal("me") }),
+      },
+    });
 
     const module = implementContract(contract, {
       getUser: ({ params }) => ({ source: "param" as const, id: params.id }),
@@ -63,22 +57,19 @@ describe("route ordering", () => {
   });
 
   test("applies within a single contract", async () => {
-    const contract = createContract(
-      {
-        getUser: {
-          method: "GET",
-          path: "/:id",
-          params: T.Object({ id: T.String() }),
-          response: T.Object({ source: T.String() }),
-        },
-        getMe: {
-          method: "GET",
-          path: "/me",
-          response: T.Object({ source: T.String() }),
-        },
+    const contract = createContract("/users", {
+      getUser: {
+        method: "GET",
+        path: "/:id",
+        params: T.Object({ id: T.String() }),
+        response: T.Object({ source: T.String() }),
       },
-      { basePath: "/users" },
-    );
+      getMe: {
+        method: "GET",
+        path: "/me",
+        response: T.Object({ source: T.String() }),
+      },
+    });
 
     const module = implementContract(contract, {
       getUser: () => ({ source: "param" }),

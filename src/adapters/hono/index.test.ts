@@ -4,23 +4,20 @@ import type { Static } from "typebox";
 import { createContract } from "../../contract";
 import { implementContract, createHonoApp } from "./index";
 
-const contract = createContract(
-  {
-    getUser: {
-      method: "GET",
-      path: "/users/:id",
-      params: T.Object({ id: T.String() }),
-      response: T.Object({ id: T.String(), name: T.String() }),
-    },
-    createUser: {
-      method: "POST",
-      path: "/users",
-      body: T.Object({ name: T.String() }),
-      response: T.Object({ id: T.String(), name: T.String() }),
-    },
+const contract = createContract("/api", {
+  getUser: {
+    method: "GET",
+    path: "/users/:id",
+    params: T.Object({ id: T.String() }),
+    response: T.Object({ id: T.String(), name: T.String() }),
   },
-  { basePath: "/api" },
-);
+  createUser: {
+    method: "POST",
+    path: "/users",
+    body: T.Object({ name: T.String() }),
+    response: T.Object({ id: T.String(), name: T.String() }),
+  },
+});
 
 describe("hono adapter", () => {
   test("provides Hono context in handler input", async () => {
@@ -84,17 +81,14 @@ describe("hono adapter", () => {
   });
 
   test("assembles multiple modules", async () => {
-    const usersContract = createContract(
-      {
-        getUser: {
-          method: "GET",
-          path: "/:id",
-          params: T.Object({ id: T.String() }),
-          response: T.Object({ id: T.String() }),
-        },
+    const usersContract = createContract("/users", {
+      getUser: {
+        method: "GET",
+        path: "/:id",
+        params: T.Object({ id: T.String() }),
+        response: T.Object({ id: T.String() }),
       },
-      { basePath: "/users" },
-    );
+    });
     const healthContract = createContract({
       health: { method: "GET", path: "/health", response: T.Object({ ok: T.Boolean() }) },
     });
@@ -110,27 +104,21 @@ describe("hono adapter", () => {
   });
 
   describe("named groups", () => {
-    const usersContract = createContract(
-      {
-        getUser: {
-          method: "GET",
-          path: "/:id",
-          params: T.Object({ id: T.String() }),
-          response: T.Object({ id: T.String(), name: T.String() }),
-        },
+    const usersContract = createContract("/users", {
+      getUser: {
+        method: "GET",
+        path: "/:id",
+        params: T.Object({ id: T.String() }),
+        response: T.Object({ id: T.String(), name: T.String() }),
       },
-      { basePath: "/users" },
-    );
-    const postsContract = createContract(
-      {
-        listPosts: {
-          method: "GET",
-          path: "/",
-          response: T.Array(T.Object({ id: T.String() })),
-        },
+    });
+    const postsContract = createContract("/posts", {
+      listPosts: {
+        method: "GET",
+        path: "/",
+        response: T.Array(T.Object({ id: T.String() })),
       },
-      { basePath: "/posts" },
-    );
+    });
 
     test("routes named groups at their basePaths", async () => {
       const { combineContracts } = await import("../../contract");

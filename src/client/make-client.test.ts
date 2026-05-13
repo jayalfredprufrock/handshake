@@ -7,16 +7,13 @@ const mockFetch = vi.fn().mockResolvedValue({ id: "1", name: "Alice" });
 
 describe("createFetchClient", () => {
   test("constructs URL with basePath", async () => {
-    const contract = createContract(
-      {
-        listUsers: {
-          method: "GET",
-          path: "/users",
-          response: T.Array(T.Object({ id: T.String() })),
-        },
+    const contract = createContract("/api/v1", {
+      listUsers: {
+        method: "GET",
+        path: "/users",
+        response: T.Array(T.Object({ id: T.String() })),
       },
-      { basePath: "/api/v1" },
-    );
+    });
 
     const client = createFetchClient(contract, {
       fetch: mockFetch,
@@ -54,17 +51,14 @@ describe("createFetchClient", () => {
   });
 
   test("replaces path params in URL", async () => {
-    const contract = createContract(
-      {
-        getUser: {
-          method: "GET",
-          path: "/users/:id",
-          params: T.Object({ id: T.String() }),
-          response: T.Object({ id: T.String() }),
-        },
+    const contract = createContract("/api", {
+      getUser: {
+        method: "GET",
+        path: "/users/:id",
+        params: T.Object({ id: T.String() }),
+        response: T.Object({ id: T.String() }),
       },
-      { basePath: "/api" },
-    );
+    });
 
     const client = createFetchClient(contract, {
       fetch: mockFetch,

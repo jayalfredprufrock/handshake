@@ -155,18 +155,15 @@ describe("error handling", () => {
   });
 
   test("errorHandler works with combined contracts", async () => {
-    const users = createContract(
-      {
-        getUser: {
-          method: "GET",
-          path: "/:id",
-          params: T.Object({ id: T.String() }),
-          response: T.Object({ id: T.String() }),
-          errors: T.Object({ code: T.Literal("NOT_FOUND") }),
-        },
+    const users = createContract("/users", {
+      getUser: {
+        method: "GET",
+        path: "/:id",
+        params: T.Object({ id: T.String() }),
+        response: T.Object({ id: T.String() }),
+        errors: T.Object({ code: T.Literal("NOT_FOUND") }),
       },
-      { basePath: "/users" },
-    );
+    });
 
     const combined = combineContracts([users], {
       globalErrors: T.Object({ code: T.Literal("INTERNAL_ERROR") }),
@@ -187,17 +184,14 @@ describe("error handling", () => {
   });
 
   test("errorHandler works with named group combined contracts", async () => {
-    const users = createContract(
-      {
-        getUser: {
-          method: "GET",
-          path: "/:id",
-          params: T.Object({ id: T.String() }),
-          response: T.Object({ id: T.String() }),
-        },
+    const users = createContract("/users", {
+      getUser: {
+        method: "GET",
+        path: "/:id",
+        params: T.Object({ id: T.String() }),
+        response: T.Object({ id: T.String() }),
       },
-      { basePath: "/users" },
-    );
+    });
 
     const combined = combineContracts(
       { users },
