@@ -275,13 +275,14 @@ export function createHonoApp<C extends Contract<any, any, any>>(
 ): Hono {
   const root = new Hono();
 
-  if (options?.errorHandler) {
-    const errorHandler = options.errorHandler;
-    root.onError((err, c) => {
+  const errorHandler = options?.errorHandler;
+  root.onError((err, c) => {
+    if (errorHandler) {
       const apiErr = errorHandler(err);
       return c.json(apiErr.body, apiErr.statusCode as any);
-    });
-  }
+    }
+    return c.json({ error: "Internal Server Error" }, 500);
+  });
 
   for (const module of modules) {
     root.route(module._basePath || "/", module._hono);
