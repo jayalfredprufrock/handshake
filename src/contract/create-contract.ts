@@ -71,11 +71,11 @@ export type EffectiveErrors<
   E extends TSchema | undefined,
 > = G extends TSchema ? (E extends TSchema ? TUnion<[G, E]> : G) : E;
 
-export type ContractErrors<C extends Contract<any, any>> = {
+export type ContractErrors<C extends Contract<any, any, any>> = {
   [K in keyof C["endpoints"]]: EffectiveErrors<ExtractGlobalErrors<C>, C["endpoints"][K]["errors"]>;
 };
 
-export type ContractSchema<C extends Contract> = {
+export type ContractSchema<C extends Contract<any, any, any>> = {
   [E in keyof C["endpoints"]]: {
     body: InferSchema<C["endpoints"][E]["body"]>;
     response: InferSchema<C["endpoints"][E]["response"]>;
@@ -84,18 +84,18 @@ export type ContractSchema<C extends Contract> = {
   };
 };
 
-export type ContractBody<C extends Contract> = {
+export type ContractBody<C extends Contract<any, any, any>> = {
   [E in keyof C["endpoints"]]: InferSchema<C["endpoints"][E]["body"]>;
 };
 
-export type ContractResponse<C extends Contract> = {
+export type ContractResponse<C extends Contract<any, any, any>> = {
   [E in keyof C["endpoints"]]: InferSchema<C["endpoints"][E]["response"]>;
 };
 
-export type ContractParams<C extends Contract> = {
+export type ContractParams<C extends Contract<any, any, any>> = {
   [E in keyof C["endpoints"]]: InferSchema<C["endpoints"][E]["params"]>;
 };
 
-export type ContractQuery<C extends Contract> = {
+export type ContractQuery<C extends Contract<any, any, any>> = {
   [E in keyof C["endpoints"]]: InferSchema<C["endpoints"][E]["query"]>;
 };
