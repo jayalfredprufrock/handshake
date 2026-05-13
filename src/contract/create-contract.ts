@@ -1,4 +1,4 @@
-import type { Static, TSchema } from "typebox";
+import type { Static, TSchema, TUnion } from "typebox";
 
 export type InferSchema<S> = S extends TSchema ? Static<S> : any;
 
@@ -13,28 +13,52 @@ export type Endpoint = {
   params?: TSchema;
   body?: TSchema;
   query?: TSchema;
+  errors?: TSchema;
   description?: string;
 } & MetaField<EndpointMeta>;
 
-export interface Contract<C extends Record<string, Endpoint> = Record<string, Endpoint>> {
+export interface Contract<
+  C extends Record<string, Endpoint> = Record<string, Endpoint>,
+  G extends TSchema | undefined = undefined,
+  N extends Record<string, Contract<any, any>> | undefined = undefined,
+> {
   basePath: string;
   endpoints: C;
+  globalErrors?: G;
+  named?: N;
+}
+
+export interface ContractOptions<G extends TSchema | undefined = undefined> {
+  basePath?: string;
+  globalErrors?: G;
 }
 
 export function createContract<const C extends Record<string, Endpoint>>(endpoints: C): Contract<C>;
-export function createContract<const C extends Record<string, Endpoint>>(
-  basePath: string,
-  endpoints: C,
-): Contract<C>;
+export function createContract<
+  const C extends Record<string, Endpoint>,
+  G extends TSchema | undefined = undefined,
+>(endpoints: C, options: ContractOptions<G>): Contract<C, G>;
 export function createContract(
-  basePathOrEndpoints: string | Record<string, Endpoint>,
-  maybeEndpoints?: Record<string, Endpoint>,
+  endpoints: Record<string, Endpoint>,
+  options?: ContractOptions<any>,
 ): Contract {
-  if (typeof basePathOrEndpoints === "string") {
-    return { basePath: basePathOrEndpoints, endpoints: maybeEndpoints! };
-  }
-  return { basePath: "/", endpoints: basePathOrEndpoints };
+  return {
+    basePath: options?.basePath ?? "/",
+    endpoints,
+    globalErrors: options?.globalErrors,
+  };
 }
+
+export type ExtractGlobalErrors<C> = C extends Contract<any, infer G> ? G : undefined;
+
+export type EffectiveErrors<
+  G extends TSchema | undefined,
+  E extends TSchema | undefined,
+> = G extends TSchema ? (E extends TSchema ? TUnion<[G, E]> : G) : E;
+
+export type ContractErrors<C extends Contract<any, any>> = {
+  [K in keyof C["endpoints"]]: EffectiveErrors<ExtractGlobalErrors<C>, C["endpoints"][K]["errors"]>;
+};
 
 export type ContractSchema<C extends Contract> = {
   [E in keyof C["endpoints"]]: {

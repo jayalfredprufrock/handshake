@@ -1,14 +1,22 @@
 import type { Static, TSchema } from "typebox";
-import type { Contract, Endpoint } from "../contract";
+import type { Contract, Endpoint, EffectiveErrors, InferSchema } from "../contract";
+import { ApiError, computeEffectiveErrors } from "../contract";
 
-// TODO: this could handle the "none" case too and resolve to never
-export type InferSchema<S> = S extends TSchema ? Static<S> : any;
-
-// TODO: is it possible to infer whether there are any required properties of query?
 export type ClientOptions<E extends Endpoint> = {
   query?: InferSchema<E["query"]>;
   request?: Omit<RequestInit, "method" | "body">;
 };
+
+type ErrorCodes<S extends TSchema> = Static<S> extends { code: infer C } ? C & string : string;
+
+export type EndpointErrorGuard<S extends TSchema | undefined> = S extends TSchema
+  ? {
+      (err: unknown): err is ApiError<Static<S>>;
+      <C extends ErrorCodes<S>>(
+        code: C,
+      ): (err: unknown) => err is ApiError<Extract<Static<S>, { code: C }>>;
+    }
+  : (err: unknown) => err is ApiError;
 
 export type ClientEndpoint<E extends Endpoint> = E["params"] extends TSchema
   ? E["body"] extends TSchema
@@ -28,8 +36,14 @@ export type ClientEndpoint<E extends Endpoint> = E["params"] extends TSchema
       ) => Promise<InferSchema<E["response"]>>
     : (options?: ClientOptions<E>) => Promise<InferSchema<E["response"]>>;
 
-export type Client<C extends Record<string, Endpoint>> = {
-  [E in keyof C]: C[E] & ClientEndpoint<C[E]>;
+export type Client<
+  C extends Record<string, Endpoint>,
+  G extends TSchema | undefined = undefined,
+> = {
+  [E in keyof C]: C[E] &
+    ClientEndpoint<C[E]> & {
+      isApiError: EndpointErrorGuard<EffectiveErrors<G, C[E]["errors"]>>;
+    };
 };
 
 const extractArgs = (endpoint: Endpoint, args: any[]) => {
@@ -90,10 +104,23 @@ export interface FetchClientConfig {
   baseUrl: string;
 }
 
-export const createFetchClient = <C extends Record<string, Endpoint>>(
-  contract: Contract<C>,
+function makeEndpointIsApiError(_effectiveErrors: TSchema | undefined) {
+  return function isApiError(errOrCode: unknown) {
+    if (typeof errOrCode === "string") {
+      const code = errOrCode;
+      return (err: unknown) => err instanceof ApiError && err.body.code === code;
+    }
+    return errOrCode instanceof ApiError;
+  };
+}
+
+export const createFetchClient = <
+  C extends Record<string, Endpoint>,
+  G extends TSchema | undefined = undefined,
+>(
+  contract: Contract<C, G>,
   config: FetchClientConfig,
-): Client<C> => {
+): Client<C, G> => {
   const basePath = contract.basePath === "/" ? "" : contract.basePath;
   return Object.fromEntries(
     Object.entries(contract.endpoints).map(([name, endpoint]) => {
@@ -110,7 +137,13 @@ export const createFetchClient = <C extends Record<string, Endpoint>>(
         });
       };
 
-      Object.assign(func, endpoint);
+      const effectiveErrors = computeEffectiveErrors(
+        (contract as Contract<any, any>).globalErrors,
+        endpoint.errors,
+      );
+      const isApiError = makeEndpointIsApiError(effectiveErrors);
+
+      Object.assign(func, endpoint, { isApiError });
 
       return [name, func];
     }),

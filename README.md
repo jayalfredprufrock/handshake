@@ -31,219 +31,121 @@ A contract describes every endpoint in your API: its HTTP method, path, path par
 import { createContract } from "@jayalfredprufrock/handshake/contract";
 import { Type } from "typebox";
 
-export const contract = createContract("/api", {
-  getUser: {
-    method: "GET",
-    path: "/users/:id",
-    params: Type.Object({ id: Type.String() }),
-    response: Type.Object({
-      id: Type.String(),
-      name: Type.String(),
-      email: Type.String(),
-    }),
-  },
-
-  listUsers: {
-    method: "GET",
-    path: "/users",
-    response: Type.Array(
-      Type.Object({
+export const contract = createContract(
+  {
+    getUser: {
+      method: "GET",
+      path: "/users/:id",
+      params: Type.Object({ id: Type.String() }),
+      response: Type.Object({
         id: Type.String(),
         name: Type.String(),
         email: Type.String(),
       }),
-    ),
-  },
+    },
 
-  createUser: {
-    method: "POST",
-    path: "/users",
-    body: Type.Object({
-      name: Type.String(),
-      email: Type.String(),
-    }),
-    response: Type.Object({
-      id: Type.String(),
-      name: Type.String(),
-      email: Type.String(),
-    }),
-  },
+    listUsers: {
+      method: "GET",
+      path: "/users",
+      response: Type.Array(
+        Type.Object({
+          id: Type.String(),
+          name: Type.String(),
+          email: Type.String(),
+        }),
+      ),
+    },
 
-  deleteUser: {
-    method: "DELETE",
-    path: "/users/:id",
-    params: Type.Object({ id: Type.String() }),
-    response: Type.Object({ id: Type.String() }),
+    createUser: {
+      method: "POST",
+      path: "/users",
+      body: Type.Object({
+        name: Type.String(),
+        email: Type.String(),
+      }),
+      response: Type.Object({
+        id: Type.String(),
+        name: Type.String(),
+        email: Type.String(),
+      }),
+    },
+
+    deleteUser: {
+      method: "DELETE",
+      path: "/users/:id",
+      params: Type.Object({ id: Type.String() }),
+      response: Type.Object({ id: Type.String() }),
+    },
   },
-});
+  { basePath: "/api" },
+);
 ```
 
-The first argument to `createContract` is an optional base path that prefixes all endpoint paths. Omit it to default to `"/"`.
+The second argument is an optional options object. `basePath` prefixes all endpoint paths and defaults to `"/"`.
 
 ### 2. Create a Server
 
-Use the Hono adapter to bind handlers to the contract. Every endpoint must have a handler registered before the app can be built — if you miss one, `build()` throws at startup.
+Use `implementContract` to bind handlers to a contract, then assemble the Hono app with `createHonoApp`.
 
 ```ts
 // server.ts
 import { serve } from "@hono/node-server";
-import { createHonoApp } from "@jayalfredprufrock/handshake/hono";
+import { implementContract, createHonoApp } from "@jayalfredprufrock/handshake/hono";
 import { contract } from "./contract";
 
 const users = new Map<string, { id: string; name: string; email: string }>();
 let nextId = 1;
 
-const api = createHonoApp(contract);
-
-api.implement("getUser", ({ params }) => {
-  const user = users.get(params.id);
-  if (!user) {
-    return new Response(JSON.stringify({ error: "Not found" }), { status: 404 });
-  }
-  return user;
+const module = implementContract(contract, {
+  getUser: ({ params }) => {
+    const user = users.get(params.id);
+    if (!user) {
+      return new Response(JSON.stringify({ error: "Not found" }), { status: 404 });
+    }
+    return user;
+  },
+  listUsers: () => [...users.values()],
+  createUser: ({ body }) => {
+    const id = String(nextId++);
+    const user = { id, ...body };
+    users.set(id, user);
+    return user;
+  },
+  deleteUser: ({ params }) => {
+    users.delete(params.id);
+    return { id: params.id };
+  },
 });
 
-api.implement("listUsers", () => [...users.values()]);
-
-api.implement("createUser", ({ body }) => {
-  const id = String(nextId++);
-  const user = { id, ...body };
-  users.set(id, user);
-  return user;
-});
-
-api.implement("deleteUser", ({ params }) => {
-  users.delete(params.id);
-  return { id: params.id };
-});
-
-const app = api.build();
+const app = createHonoApp(contract, [module]);
 
 serve({ fetch: app.fetch, port: 3000 });
 ```
 
 Handler inputs are fully typed — `params`, `body`, and `query` are inferred from the contract. Handlers can return plain objects (automatically serialized as JSON) or raw `Response` objects for full control.
 
+Providing a handler for every endpoint in the contract is enforced at call time — `implementContract` throws immediately if any handler is missing.
+
 The adapter validates incoming requests automatically:
 
 - **Path params** and **query params** are coerced to match the schema (e.g. string `"42"` becomes number `42`).
 - **Request bodies** are validated and reject missing or extra properties.
-- **Responses** are validated by default — unknown properties are stripped, and type mismatches produce a 500 error. This can be disabled globally or per-handler:
+- **Responses** are validated by default — unknown properties are stripped, and type mismatches produce a 500 error. Disable per module or per handler:
 
 ```ts
-// Disable response validation globally
-const api = createHonoApp(contract, { validateResponse: false });
+// Disable response validation for the whole module
+const module = implementContract(contract, handlers, { validateResponse: false });
 
-// Or per-handler
-api.implement("listUsers", () => [...users.values()], { validateResponse: false });
+// Or per handler via the closure form
+const module = implementContract(contract, (group) => {
+  group.implement("listUsers", () => [...users.values()], { validateResponse: false });
+  group.implement("getUser", ({ params }) => ({ id: params.id, name: "Alice" }));
+});
 ```
 
 #### Route ordering
 
-At `build()`, routes are sorted by path specificity before being registered on Hono — literal segments take precedence over `:param` segments at the same position. This means a contract with `/users/:id` and `/users/me` resolves `/users/me` to the literal handler regardless of the order the endpoints appear in the contract. Within each specificity tier, registration order is preserved.
-
-#### Bringing your own Hono app
-
-Pass an existing `Hono` instance as the first argument to register the contract routes on it. This is the way to attach middleware or non-contract routes, and the app's `Env` generic (Bindings/Variables) is threaded through to `c` in every handler so `c.env` and `c.var` are fully typed.
-
-```ts
-import { Hono } from "hono";
-import { logger } from "hono/logger";
-
-type Env = { Variables: { user: { id: string } } };
-
-const hono = new Hono<Env>();
-hono.use("*", logger());
-hono.get("/health", (c) => c.json({ ok: true }));
-
-const api = createHonoApp(hono, contract);
-
-api.implement("getUser", ({ c, params }) => {
-  const user = c.var.user; // typed from Env
-  return { id: params.id, name: user.id };
-});
-```
-
-#### Splitting contracts across files
-
-For larger apps, split the contract into one file per resource and implement each independently with `implementContract`. Pass the resulting route modules to `createHonoApp` as an array — each is mounted as an isolated Hono sub-app at the contract's `basePath`, so per-module middleware stays scoped to its own routes.
-
-Authoring convention: give each sub-contract a `basePath` (e.g. `"/users"`) and write endpoint paths relative to it (e.g. `"/:id"`). The `basePath` is what the sub-app is mounted at.
-
-```ts
-// contracts/users.ts — pure, no server imports
-import { Type } from "typebox";
-import { createContract } from "@jayalfredprufrock/handshake/contract";
-
-export const usersContract = createContract("/users", {
-  getUser: {
-    method: "GET",
-    path: "/:id",
-    params: Type.Object({ id: Type.String() }),
-    response: Type.Object({ id: Type.String(), name: Type.String() }),
-  },
-  listUsers: {
-    method: "GET",
-    path: "/",
-    response: Type.Array(Type.Object({ id: Type.String(), name: Type.String() })),
-  },
-});
-```
-
-```ts
-// routes/users.ts — object form: concise, type-checked for completeness
-import { implementContract } from "@jayalfredprufrock/handshake/hono";
-import { usersContract } from "../contracts/users";
-
-export const usersRoute = implementContract(usersContract, {
-  getUser: ({ params }) => ({ id: params.id, name: "Alice" }),
-  listUsers: () => [],
-});
-```
-
-Missing a handler for any contract key is a type error. Use the closure form when you need middleware or direct access to the Hono sub-app:
-
-```ts
-// routes/posts.ts — closure form: middleware + handlers
-import { implementContract } from "@jayalfredprufrock/handshake/hono";
-import { bearerAuth } from "hono/bearer-auth";
-import { postsContract } from "../contracts/posts";
-
-export const postsRoute = implementContract(postsContract, (app) => {
-  app.use("*", bearerAuth({ token: process.env.API_TOKEN! }));
-
-  app.implement("getPost", ({ params }) => ({ id: params.id, title: "Hello" }));
-});
-```
-
-Assemble the server by passing the route modules to `createHonoApp`:
-
-```ts
-// server.ts
-import { Hono } from "hono";
-import { logger } from "hono/logger";
-import { createHonoApp } from "@jayalfredprufrock/handshake/hono";
-import { usersRoute } from "./routes/users";
-import { postsRoute } from "./routes/posts";
-
-const root = new Hono();
-root.use("*", logger()); // root-level middleware applies to every route
-
-const app = createHonoApp(root, [usersRoute, postsRoute]);
-```
-
-For the client, compose a single contract with `combineContracts`. It merges the endpoints from each sub-contract, prefixing paths with each sub-contract's `basePath`, and throws if two sub-contracts define the same endpoint name:
-
-```ts
-// contracts/index.ts
-import { combineContracts } from "@jayalfredprufrock/handshake/contract";
-import { usersContract } from "./users";
-import { postsContract } from "./posts";
-
-export const contract = combineContracts("/api", [usersContract, postsContract]);
-```
-
-This barrel has zero server dependencies — safe to import from client bundles.
+Routes are sorted by path specificity before registration — literal segments take precedence over `:param` segments at the same position. A contract with `/users/:id` and `/users/me` resolves `/users/me` to the literal handler regardless of endpoint definition order.
 
 ### 3. Create a Client
 
@@ -274,6 +176,196 @@ await api.deleteUser({ id: created.id });
 ```
 
 Method signatures adapt to the endpoint definition — endpoints with path params take a params object as the first argument, endpoints with a body take it next, and query/request options are always last.
+
+## Larger Apps
+
+### Splitting contracts across files
+
+For larger apps, define each resource as its own contract and combine them. Use `combineContracts` with a named-object form — the keys become group names used by `implementContract` on the server:
+
+```ts
+// contracts/users.ts
+import { createContract } from "@jayalfredprufrock/handshake/contract";
+import { Type } from "typebox";
+
+export const usersContract = createContract(
+  {
+    getUser: {
+      method: "GET",
+      path: "/:id",
+      params: Type.Object({ id: Type.String() }),
+      response: Type.Object({ id: Type.String(), name: Type.String() }),
+    },
+    listUsers: {
+      method: "GET",
+      path: "/",
+      response: Type.Array(Type.Object({ id: Type.String(), name: Type.String() })),
+    },
+  },
+  { basePath: "/users" },
+);
+```
+
+```ts
+// contracts/index.ts
+import { combineContracts } from "@jayalfredprufrock/handshake/contract";
+import { Type } from "typebox";
+import { usersContract } from "./users";
+import { postsContract } from "./posts";
+
+export const contract = combineContracts(
+  { users: usersContract, posts: postsContract },
+  { basePath: "/api" },
+);
+```
+
+This barrel has zero server dependencies — safe to import from client bundles.
+
+Each route file imports the combined contract and calls `implementContract` with the group name:
+
+```ts
+// routes/users.ts
+import { implementContract } from "@jayalfredprufrock/handshake/hono";
+import { contract } from "../contracts";
+
+export const usersModule = implementContract(contract, "users", {
+  getUser: ({ params }) => ({ id: params.id, name: "Alice" }),
+  listUsers: () => [],
+});
+```
+
+Use the closure form when you need per-group middleware:
+
+```ts
+// routes/posts.ts
+import { implementContract } from "@jayalfredprufrock/handshake/hono";
+import { bearerAuth } from "hono/bearer-auth";
+import { contract } from "../contracts";
+
+export const postsModule = implementContract(contract, "posts", (group) => {
+  group.use(bearerAuth({ token: process.env.API_TOKEN! }));
+
+  group.implement("getPost", ({ params }) => ({ id: params.id, title: "Hello" }));
+  group.implement("listPosts", () => []);
+});
+```
+
+Assemble the server by importing the modules:
+
+```ts
+// server.ts
+import { createHonoApp } from "@jayalfredprufrock/handshake/hono";
+import { contract } from "./contracts";
+import { usersModule } from "./routes/users";
+import { postsModule } from "./routes/posts";
+
+const app = createHonoApp(contract, [usersModule, postsModule]);
+```
+
+Each module is fully built at import time — there is no shared mutable app instance and no `build()` call needed.
+
+#### Global middleware
+
+`createHonoApp` returns a plain `Hono` instance. To add app-level middleware (logging, CORS, auth, etc.), mount the returned app on your own root Hono using `route("/", ...)`:
+
+```ts
+import { Hono } from "hono";
+import { logger } from "hono/logger";
+import { cors } from "hono/cors";
+
+const root = new Hono();
+root.use("*", logger());
+root.use("*", cors());
+root.get("/health", (c) => c.json({ ok: true }));
+
+root.route("/", createHonoApp(contract, [usersModule, postsModule]));
+```
+
+Middleware registered on `root` runs before all contract routes.
+
+### Error contracts
+
+Declare the errors an endpoint can return using `errors`. On the client, each endpoint gets a typed `isApiError` guard that narrows the error body:
+
+```ts
+// contracts/users.ts
+import { Type } from "typebox";
+import { createContract } from "@jayalfredprufrock/handshake/contract";
+
+export const usersContract = createContract(
+  {
+    getUser: {
+      method: "GET",
+      path: "/:id",
+      params: Type.Object({ id: Type.String() }),
+      response: Type.Object({ id: Type.String(), name: Type.String() }),
+      errors: Type.Object({ code: Type.Literal("NOT_FOUND") }),
+    },
+  },
+  { basePath: "/users" },
+);
+```
+
+On the server, throw an `ApiError` — it is passed through to the client automatically when its body matches the declared errors:
+
+```ts
+import { ApiError } from "@jayalfredprufrock/handshake/contract";
+
+group.implement("getUser", ({ params }) => {
+  const user = db.find(params.id);
+  if (!user) throw new ApiError(404, { code: "NOT_FOUND" });
+  return user;
+});
+```
+
+On the client:
+
+```ts
+import { isApiError } from "@jayalfredprufrock/handshake/contract";
+
+try {
+  const user = await api.getUser({ id: "42" });
+} catch (err) {
+  if (api.getUser.isApiError(err)) {
+    // err.body is typed as the full error union for this endpoint
+  }
+  if (api.getUser.isApiError("NOT_FOUND")(err)) {
+    // err.body is narrowed to { code: "NOT_FOUND" }
+  }
+}
+```
+
+`isApiError` is also available as a standalone utility for use outside the client:
+
+```ts
+if (isApiError(err, "NOT_FOUND")) {
+  // err.body.code is typed as "NOT_FOUND"
+}
+```
+
+#### Global errors
+
+Errors shared across all endpoints (e.g. `UNAUTHORIZED`, `INTERNAL_ERROR`) can be declared once on `combineContracts` (or `createContract`) using `globalErrors`. They are automatically merged into the effective error union for every endpoint:
+
+```ts
+export const contract = combineContracts(
+  { users: usersContract, posts: postsContract },
+  {
+    basePath: "/api",
+    globalErrors: Type.Object({ code: Type.Literal("UNAUTHORIZED") }),
+  },
+);
+```
+
+Provide an `errorHandler` on `createHonoApp` to convert unexpected errors (those that don't match any declared error schema) into a typed `ApiError`:
+
+```ts
+const app = createHonoApp(contract, [usersModule, postsModule], {
+  errorHandler: (err) => new ApiError(500, { code: "INTERNAL_ERROR" }),
+});
+```
+
+The `errorHandler` return type is constrained to `ApiError<Static<typeof globalErrors>>` when global errors are declared, keeping the type system consistent end-to-end.
 
 ## License
 

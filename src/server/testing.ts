@@ -4,39 +4,42 @@ import { createContract } from "../contract";
 import type { AdapterFactory } from "./types";
 
 export function runAdapterTests(createAdapter: AdapterFactory) {
-  const crudContract = createContract("/api", {
-    getUser: {
-      method: "GET",
-      path: "/users/:id",
-      params: T.Object({ id: T.String() }),
-      response: T.Object({ id: T.String(), name: T.String() }),
+  const crudContract = createContract(
+    {
+      getUser: {
+        method: "GET",
+        path: "/users/:id",
+        params: T.Object({ id: T.String() }),
+        response: T.Object({ id: T.String(), name: T.String() }),
+      },
+      listUsers: {
+        method: "GET",
+        path: "/users",
+        query: T.Object({ limit: T.Optional(T.String()) }),
+        response: T.Array(T.Object({ id: T.String(), name: T.String() })),
+      },
+      createUser: {
+        method: "POST",
+        path: "/users",
+        body: T.Object({ name: T.String() }),
+        response: T.Object({ id: T.String(), name: T.String() }),
+      },
+      updateUser: {
+        method: "PATCH",
+        path: "/users/:id",
+        params: T.Object({ id: T.String() }),
+        body: T.Object({ name: T.Optional(T.String()) }),
+        response: T.Object({ id: T.String(), name: T.String() }),
+      },
+      deleteUser: {
+        method: "DELETE",
+        path: "/users/:id",
+        params: T.Object({ id: T.String() }),
+        response: T.Object({ id: T.String() }),
+      },
     },
-    listUsers: {
-      method: "GET",
-      path: "/users",
-      query: T.Object({ limit: T.Optional(T.String()) }),
-      response: T.Array(T.Object({ id: T.String(), name: T.String() })),
-    },
-    createUser: {
-      method: "POST",
-      path: "/users",
-      body: T.Object({ name: T.String() }),
-      response: T.Object({ id: T.String(), name: T.String() }),
-    },
-    updateUser: {
-      method: "PATCH",
-      path: "/users/:id",
-      params: T.Object({ id: T.String() }),
-      body: T.Object({ name: T.Optional(T.String()) }),
-      response: T.Object({ id: T.String(), name: T.String() }),
-    },
-    deleteUser: {
-      method: "DELETE",
-      path: "/users/:id",
-      params: T.Object({ id: T.String() }),
-      response: T.Object({ id: T.String() }),
-    },
-  });
+    { basePath: "/api" },
+  );
 
   function registerCrudHandlers(api: ReturnType<typeof createAdapter>) {
     api.handle("getUser", ({ params }: any) => ({ id: params.id, name: "Alice" }));

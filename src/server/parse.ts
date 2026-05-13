@@ -89,6 +89,10 @@ export function parseResponse(schema: TSchema, raw: unknown): unknown {
   return value;
 }
 
+export function checkValue(schema: TSchema, value: unknown): boolean {
+  return T.Check(schema, value);
+}
+
 const AssertError = T.AssertError;
 
 export { AssertError };

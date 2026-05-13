@@ -1,53 +1,54 @@
-import type { Contract, Endpoint, InferSchema } from "../../contract";
+import type { Contract, Endpoint, ExtractGlobalErrors, InferSchema } from "../../contract";
+import { ApiError, computeEffectiveErrors, joinPath } from "../../contract";
 import {
   AssertError,
   type BaseHandlerInput,
-  HandlerRegistry,
   type HandlerOptions,
   QueryNormalizationError,
+  checkValue,
   parseBody,
   parseParams,
   parseQuery,
   parseResponse,
 } from "../../server";
 import { Hono } from "hono";
-import type { Context, Env } from "hono";
+import type { Context, Env, MiddlewareHandler } from "hono";
+import type { Static, TSchema } from "typebox";
 
 type HandlerInput<E extends Endpoint, HonoEnv extends Env> = BaseHandlerInput<E> & {
   c: Context<HonoEnv>;
 };
 
-type Handler<E extends Endpoint, HonoEnv extends Env> = (
+type Handler<E extends Endpoint, HonoEnv extends Env = Env> = (
   input: HandlerInput<E, HonoEnv>,
 ) => InferSchema<E["response"]> | Response | Promise<InferSchema<E["response"]> | Response>;
 
-export interface HandshakeApp<C extends Contract, HonoEnv extends Env = Env> {
-  implement<K extends keyof C["endpoints"] & string>(
-    name: K,
-    handler: Handler<C["endpoints"][K], HonoEnv>,
-    options?: HandlerOptions,
-  ): void;
-  build(): Hono<HonoEnv>;
-}
-
-export type HandshakeHono<C extends Contract, HonoEnv extends Env = Env> = Hono<HonoEnv> & {
-  implement: HandshakeApp<C, HonoEnv>["implement"];
+type HandlerMap<E extends Record<string, Endpoint>, HonoEnv extends Env = Env> = {
+  [K in keyof E]: Handler<E[K], HonoEnv>;
 };
 
-export interface CreateHonoAppOptions {
-  basePath?: string;
+export interface GroupBuilder<E extends Record<string, Endpoint>, HonoEnv extends Env = Env> {
+  use(middleware: MiddlewareHandler<HonoEnv>): void;
+  implement<K extends keyof E & string>(
+    name: K,
+    handler: Handler<E[K], HonoEnv>,
+    options?: HandlerOptions,
+  ): void;
+}
+
+export interface ImplementContractOptions {
   validateResponse?: boolean;
 }
 
-export type RouteRegister<C extends Contract> = (app: HandshakeHono<C>) => void;
+export interface CreateHonoAppOptions<G extends TSchema | undefined = undefined> {
+  errorHandler?: G extends TSchema
+    ? (err: unknown) => ApiError<Static<G>>
+    : (err: unknown) => ApiError;
+}
 
-export type RouteHandlersMap<C extends Contract> = {
-  [K in keyof C["endpoints"] & string]: Handler<C["endpoints"][K], Env>;
-};
-
-export interface RouteModule<C extends Contract = Contract> {
-  readonly contract: C;
-  readonly impl: RouteRegister<C> | RouteHandlersMap<C>;
+export interface RouteModule {
+  _hono: Hono;
+  _basePath: string;
 }
 
 const methodMap = {
@@ -75,166 +76,216 @@ function compareSpecificity(a: string, b: string): number {
   return 0;
 }
 
-export function implementContract<C extends Contract>(
-  contract: C,
-  impl: RouteRegister<C> | RouteHandlersMap<C>,
-): RouteModule<C> {
-  return { contract, impl };
+function normalizeMountPath(basePath: string): string {
+  return basePath === "/" ? "" : basePath;
 }
 
-export function createHonoApp<C extends Contract>(
-  contract: C,
-  options?: CreateHonoAppOptions,
-): HandshakeApp<C>;
-export function createHonoApp<HonoEnv extends Env, C extends Contract>(
-  app: Hono<HonoEnv>,
-  contract: C,
-  options?: CreateHonoAppOptions,
-): HandshakeApp<C, HonoEnv>;
-export function createHonoApp(routes: readonly RouteModule[], options?: CreateHonoAppOptions): Hono;
-export function createHonoApp<HonoEnv extends Env>(
-  app: Hono<HonoEnv>,
-  routes: readonly RouteModule[],
-  options?: CreateHonoAppOptions,
-): Hono<HonoEnv>;
-export function createHonoApp(
-  appOrContractOrRoutes: Hono | Contract | readonly RouteModule[],
-  contractOrRoutesOrOptions?: Contract | readonly RouteModule[] | CreateHonoAppOptions,
-  maybeOptions?: CreateHonoAppOptions,
-): HandshakeApp<Contract, Env> | Hono {
-  const firstIsHono = appOrContractOrRoutes instanceof Hono;
-  const providedApp = firstIsHono ? (appOrContractOrRoutes as Hono) : undefined;
-  const second = firstIsHono ? contractOrRoutesOrOptions : appOrContractOrRoutes;
-  const options = ((firstIsHono
-    ? maybeOptions
-    : (contractOrRoutesOrOptions as CreateHonoAppOptions)) ?? {}) as CreateHonoAppOptions;
-
-  if (Array.isArray(second)) {
-    const root = providedApp ?? new Hono();
-    for (const route of second as readonly RouteModule[]) {
-      const subHono = new Hono();
-      const subApi = createSingleContractApp(subHono, route.contract, {
-        ...options,
-        basePath: "",
-      });
-      if (typeof route.impl === "function") {
-        const handshakeHono = subHono as HandshakeHono<Contract>;
-        handshakeHono.implement = subApi.implement.bind(subApi);
-        route.impl(handshakeHono);
-      } else {
-        for (const [name, handler] of Object.entries(route.impl)) {
-          subApi.implement(name as any, handler as any);
-        }
-      }
-      subApi.build();
-      root.route(route.contract.basePath, subHono);
-    }
-    return root;
+function buildModule(
+  endpoints: Record<string, Endpoint>,
+  handlers: Record<string, any>,
+  perHandlerOptions: Record<string, HandlerOptions | undefined>,
+  globalErrors: TSchema | undefined,
+  subHono: Hono,
+  mountPath: string,
+  moduleOptions: ImplementContractOptions,
+): RouteModule {
+  const missing = Object.keys(endpoints).filter((name) => !(name in handlers));
+  if (missing.length > 0) {
+    throw new Error(`Missing handlers for endpoints: ${missing.join(", ")}`);
   }
 
-  return createSingleContractApp(providedApp, second as Contract, options);
-}
+  const sorted = Object.entries(endpoints).sort(([, a], [, b]) =>
+    compareSpecificity(a.path, b.path),
+  );
 
-function createSingleContractApp(
-  providedApp: Hono | undefined,
-  contract: Contract,
-  options: CreateHonoAppOptions,
-): HandshakeApp<Contract, Env> {
-  const registry = new HandlerRegistry(contract);
+  for (const [name, endpoint] of sorted) {
+    const handler = handlers[name];
+    const handlerOptions = perHandlerOptions[name];
+    const method = methodMap[endpoint.method];
 
-  return {
-    implement(name, handler, handlerOptions) {
-      registry.register(name, handler, handlerOptions);
-    },
+    subHono[method](endpoint.path, async (c: Context) => {
+      const input: Record<string, unknown> = { c };
 
-    build() {
-      registry.validateComplete();
-      const app = providedApp ?? new Hono();
-      const basePath = options.basePath ?? registry.basePath;
-
-      const sorted = [...registry.entries].sort(([, a], [, b]) =>
-        compareSpecificity(a.path, b.path),
-      );
-
-      for (const [name, endpoint] of sorted) {
-        const handler = registry.getHandler(name);
-        const handlerOptions = registry.getHandlerOptions(name);
-        const method = methodMap[endpoint.method];
-        const fullPath = `${basePath}${endpoint.path}`;
-
-        app[method](fullPath, async (c: Context) => {
-          const input: Record<string, unknown> = { c };
-
-          if (endpoint.params) {
-            try {
-              input.params = parseParams(endpoint.params, c.req.param());
-            } catch (error) {
-              if (error instanceof AssertError) {
-                return c.json(
-                  { error: "Invalid path parameters", details: error.cause.errors },
-                  400,
-                );
-              }
-              throw error;
-            }
+      if (endpoint.params) {
+        try {
+          input.params = parseParams(endpoint.params, c.req.param());
+        } catch (error) {
+          if (error instanceof AssertError) {
+            return c.json({ error: "Invalid path parameters", details: error.cause.errors }, 400);
           }
-
-          if (endpoint.query) {
-            try {
-              input.query = parseQuery(endpoint.query, c.req.queries() as Record<string, string[]>);
-            } catch (error) {
-              if (error instanceof AssertError) {
-                return c.json(
-                  { error: "Invalid query parameters", details: error.cause.errors },
-                  400,
-                );
-              }
-              if (error instanceof QueryNormalizationError) {
-                return c.json({ error: error.message }, 400);
-              }
-              throw error;
-            }
-          }
-
-          if (endpoint.body) {
-            try {
-              input.body = parseBody(endpoint.body, await c.req.json());
-            } catch (error) {
-              if (error instanceof AssertError) {
-                return c.json({ error: "Invalid request body", details: error.cause.errors }, 400);
-              }
-              throw error;
-            }
-          }
-
-          const result = await handler(input as any);
-
-          if (result instanceof Response) {
-            return result;
-          }
-
-          const shouldValidate =
-            handlerOptions?.validateResponse ?? options.validateResponse ?? true;
-
-          if (shouldValidate && endpoint.response) {
-            try {
-              return c.json(parseResponse(endpoint.response, result));
-            } catch (error) {
-              if (error instanceof AssertError) {
-                return c.json(
-                  { error: "Response validation failed", details: error.cause.errors },
-                  500,
-                );
-              }
-              throw error;
-            }
-          }
-
-          return c.json(result);
-        });
+          throw error;
+        }
       }
 
-      return app;
-    },
-  };
+      if (endpoint.query) {
+        try {
+          input.query = parseQuery(endpoint.query, c.req.queries() as Record<string, string[]>);
+        } catch (error) {
+          if (error instanceof AssertError) {
+            return c.json({ error: "Invalid query parameters", details: error.cause.errors }, 400);
+          }
+          if (error instanceof QueryNormalizationError) {
+            return c.json({ error: error.message }, 400);
+          }
+          throw error;
+        }
+      }
+
+      if (endpoint.body) {
+        try {
+          input.body = parseBody(endpoint.body, await c.req.json());
+        } catch (error) {
+          if (error instanceof AssertError) {
+            return c.json({ error: "Invalid request body", details: error.cause.errors }, 400);
+          }
+          throw error;
+        }
+      }
+
+      let result: unknown;
+      try {
+        result = await handler(input as any);
+      } catch (err) {
+        const effectiveErrors = computeEffectiveErrors(globalErrors, endpoint.errors);
+        if (err instanceof ApiError) {
+          if (!effectiveErrors || checkValue(effectiveErrors, err.body)) {
+            return c.json(err.body, err.statusCode as any);
+          }
+        }
+        throw err;
+      }
+
+      if (result instanceof Response) {
+        return result;
+      }
+
+      const shouldValidate =
+        handlerOptions?.validateResponse ?? moduleOptions.validateResponse ?? true;
+
+      if (shouldValidate && endpoint.response) {
+        try {
+          return c.json(parseResponse(endpoint.response, result));
+        } catch (error) {
+          if (error instanceof AssertError) {
+            return c.json(
+              { error: "Response validation failed", details: error.cause.errors },
+              500,
+            );
+          }
+          throw error;
+        }
+      }
+
+      return c.json(result);
+    });
+  }
+
+  return { _hono: subHono, _basePath: mountPath };
+}
+
+// Named group, object handlers or closure
+export function implementContract<
+  C extends Record<string, Endpoint>,
+  G extends TSchema | undefined,
+  N extends Record<string, Contract<any, any>>,
+  K extends keyof N & string,
+  HonoEnv extends Env = Env,
+>(
+  contract: Contract<C, G, N>,
+  groupName: K,
+  handlersOrClosure:
+    | HandlerMap<N[K]["endpoints"], HonoEnv>
+    | ((group: GroupBuilder<N[K]["endpoints"], HonoEnv>) => void),
+  options?: ImplementContractOptions,
+): RouteModule;
+
+// Unnamed, object handlers or closure
+export function implementContract<
+  C extends Record<string, Endpoint>,
+  G extends TSchema | undefined,
+  HonoEnv extends Env = Env,
+>(
+  contract: Contract<C, G, any>,
+  handlersOrClosure: HandlerMap<C, HonoEnv> | ((group: GroupBuilder<C, HonoEnv>) => void),
+  options?: ImplementContractOptions,
+): RouteModule;
+
+export function implementContract(
+  contract: Contract<any, any, any>,
+  arg2: string | Record<string, any> | ((group: any) => void),
+  arg3?: Record<string, any> | ((group: any) => void) | ImplementContractOptions,
+  arg4?: ImplementContractOptions,
+): RouteModule {
+  const subHono = new Hono();
+  const handlers: Record<string, any> = {};
+  const perHandlerOptions: Record<string, HandlerOptions | undefined> = {};
+
+  let endpoints: Record<string, Endpoint>;
+  let mountPath: string;
+  let options: ImplementContractOptions;
+  let handlersOrClosure: Record<string, any> | ((group: any) => void);
+
+  if (typeof arg2 === "string") {
+    const groupName = arg2;
+    if (!contract.named?.[groupName]) {
+      throw new Error(`No named group "${groupName}" found in contract`);
+    }
+    const groupContract = contract.named[groupName] as Contract<any, any>;
+    endpoints = groupContract.endpoints;
+    mountPath = normalizeMountPath(joinPath(contract.basePath, groupContract.basePath));
+    handlersOrClosure = arg3 as Record<string, any> | ((group: any) => void);
+    options = arg4 ?? {};
+  } else {
+    endpoints = contract.endpoints;
+    mountPath = normalizeMountPath(contract.basePath);
+    handlersOrClosure = arg2;
+    options = (arg3 as ImplementContractOptions | undefined) ?? {};
+  }
+
+  if (typeof handlersOrClosure === "function") {
+    const group: GroupBuilder<any> = {
+      use(middleware: MiddlewareHandler) {
+        subHono.use("*", middleware);
+      },
+      implement(name: string, handler: any, handlerOptions?: HandlerOptions) {
+        handlers[name] = handler;
+        if (handlerOptions) perHandlerOptions[name] = handlerOptions;
+      },
+    };
+    handlersOrClosure(group);
+  } else {
+    Object.assign(handlers, handlersOrClosure);
+  }
+
+  return buildModule(
+    endpoints,
+    handlers,
+    perHandlerOptions,
+    contract.globalErrors,
+    subHono,
+    mountPath,
+    options,
+  );
+}
+
+export function createHonoApp<C extends Contract<any, any, any>>(
+  contract: C,
+  modules: RouteModule[],
+  options?: CreateHonoAppOptions<ExtractGlobalErrors<C>>,
+): Hono {
+  const root = new Hono();
+
+  if (options?.errorHandler) {
+    const errorHandler = options.errorHandler;
+    root.onError((err, c) => {
+      const apiErr = errorHandler(err);
+      return c.json(apiErr.body, apiErr.statusCode as any);
+    });
+  }
+
+  for (const module of modules) {
+    root.route(module._basePath || "/", module._hono);
+  }
+
+  return root;
 }

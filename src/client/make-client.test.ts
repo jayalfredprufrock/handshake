@@ -1,19 +1,22 @@
-import { describe, expect, test, vi } from "vite-plus/test";
+import { describe, expect, expectTypeOf, test, vi } from "vite-plus/test";
 import * as T from "typebox";
-import { createContract } from "../contract";
+import { createContract, ApiError } from "../contract";
 import { createFetchClient } from "../client";
 
 const mockFetch = vi.fn().mockResolvedValue({ id: "1", name: "Alice" });
 
 describe("createFetchClient", () => {
   test("constructs URL with basePath", async () => {
-    const contract = createContract("/api/v1", {
-      listUsers: {
-        method: "GET",
-        path: "/users",
-        response: T.Array(T.Object({ id: T.String() })),
+    const contract = createContract(
+      {
+        listUsers: {
+          method: "GET",
+          path: "/users",
+          response: T.Array(T.Object({ id: T.String() })),
+        },
       },
-    });
+      { basePath: "/api/v1" },
+    );
 
     const client = createFetchClient(contract, {
       fetch: mockFetch,
@@ -51,14 +54,17 @@ describe("createFetchClient", () => {
   });
 
   test("replaces path params in URL", async () => {
-    const contract = createContract("/api", {
-      getUser: {
-        method: "GET",
-        path: "/users/:id",
-        params: T.Object({ id: T.String() }),
-        response: T.Object({ id: T.String() }),
+    const contract = createContract(
+      {
+        getUser: {
+          method: "GET",
+          path: "/users/:id",
+          params: T.Object({ id: T.String() }),
+          response: T.Object({ id: T.String() }),
+        },
       },
-    });
+      { basePath: "/api" },
+    );
 
     const client = createFetchClient(contract, {
       fetch: mockFetch,
@@ -168,5 +174,97 @@ describe("createFetchClient", () => {
       "https://example.com/users",
       expect.objectContaining({ method: "GET" }),
     );
+  });
+
+  describe("isApiError", () => {
+    test("returns true for any ApiError on endpoint without declared errors", () => {
+      const contract = createContract({
+        getUser: {
+          method: "GET",
+          path: "/users/:id",
+          params: T.Object({ id: T.String() }),
+          response: T.Object({ id: T.String() }),
+        },
+      });
+
+      const client = createFetchClient(contract, { fetch: mockFetch, baseUrl: "" });
+      const err = new ApiError(500, { code: "SOME_ERROR" });
+
+      expect(client.getUser.isApiError(err)).toBe(true);
+      expect(client.getUser.isApiError(new Error("plain"))).toBe(false);
+    });
+
+    test("narrows to the full effective error union (no code)", () => {
+      const NotFound = T.Object({ code: T.Literal("NOT_FOUND"), resource: T.String() });
+      const contract = createContract(
+        {
+          getUser: {
+            method: "GET",
+            path: "/users/:id",
+            params: T.Object({ id: T.String() }),
+            response: T.Object({ id: T.String() }),
+            errors: NotFound,
+          },
+        },
+        { globalErrors: T.Object({ code: T.Literal("UNAUTHORIZED") }) },
+      );
+
+      const client = createFetchClient(contract, { fetch: mockFetch, baseUrl: "" });
+      const err: unknown = new ApiError(404, { code: "NOT_FOUND", resource: "user" });
+
+      if (client.getUser.isApiError(err)) {
+        expectTypeOf(err.body).toEqualTypeOf<
+          { code: "NOT_FOUND"; resource: string } | { code: "UNAUTHORIZED" }
+        >();
+      }
+    });
+
+    test("factory form returns a type guard narrowed to the specified code", () => {
+      const contract = createContract(
+        {
+          getUser: {
+            method: "GET",
+            path: "/users/:id",
+            params: T.Object({ id: T.String() }),
+            response: T.Object({ id: T.String() }),
+            errors: T.Object({ code: T.Literal("NOT_FOUND"), resource: T.String() }),
+          },
+        },
+        { globalErrors: T.Object({ code: T.Literal("UNAUTHORIZED") }) },
+      );
+
+      const client = createFetchClient(contract, { fetch: mockFetch, baseUrl: "" });
+
+      const isNotFound = client.getUser.isApiError("NOT_FOUND");
+      const notFoundErr = new ApiError(404, { code: "NOT_FOUND", resource: "user" });
+      const unauthorizedErr = new ApiError(401, { code: "UNAUTHORIZED" });
+
+      expect(isNotFound(notFoundErr)).toBe(true);
+      expect(isNotFound(unauthorizedErr)).toBe(false);
+      expect(isNotFound(new Error("plain"))).toBe(false);
+    });
+
+    test("factory form narrows body to the specific variant", () => {
+      const contract = createContract(
+        {
+          getUser: {
+            method: "GET",
+            path: "/users/:id",
+            params: T.Object({ id: T.String() }),
+            response: T.Object({ id: T.String() }),
+            errors: T.Object({ code: T.Literal("NOT_FOUND"), resource: T.String() }),
+          },
+        },
+        { globalErrors: T.Object({ code: T.Literal("UNAUTHORIZED") }) },
+      );
+
+      const client = createFetchClient(contract, { fetch: mockFetch, baseUrl: "" });
+      const isNotFound = client.getUser.isApiError("NOT_FOUND");
+      const err: unknown = new ApiError(404, { code: "NOT_FOUND", resource: "user" });
+
+      if (isNotFound(err)) {
+        expectTypeOf(err.body).toEqualTypeOf<{ code: "NOT_FOUND"; resource: string }>();
+      }
+    });
   });
 });
