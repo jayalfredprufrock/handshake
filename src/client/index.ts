@@ -1,2 +1,2 @@
-export * from "./fetch-json";
+export * from "./make-fetch";
 export * from "./make-client";
