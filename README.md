@@ -114,7 +114,7 @@ const module = implementContract(contract, {
   },
 });
 
-const app = createHonoApp(contract, [module]);
+const app = createHonoApp([module]);
 
 serve({ fetch: app.fetch, port: 3000 });
 ```
@@ -253,7 +253,7 @@ import { contract } from "./contracts";
 import { usersModule } from "./routes/users";
 import { postsModule } from "./routes/posts";
 
-const app = createHonoApp(contract, [usersModule, postsModule]);
+const app = createHonoApp([usersModule, postsModule]);
 ```
 
 Each module is fully built at import time — there is no shared mutable app instance and no `build()` call needed.
@@ -272,7 +272,7 @@ root.use("*", logger());
 root.use("*", cors());
 root.get("/health", (c) => c.json({ ok: true }));
 
-root.route("/", createHonoApp(contract, [usersModule, postsModule]));
+root.route("/", createHonoApp([usersModule, postsModule]));
 ```
 
 Middleware registered on `root` runs before all contract routes.
@@ -351,12 +351,10 @@ export const contract = combineContracts(
 Provide an `errorHandler` on `createHonoApp` to convert unexpected errors (those that don't match any declared error schema) into a typed `ApiError`:
 
 ```ts
-const app = createHonoApp(contract, [usersModule, postsModule], {
+const app = createHonoApp([usersModule, postsModule], {
   errorHandler: (err) => new ApiError(500, { code: "INTERNAL_ERROR" }),
 });
 ```
-
-The `errorHandler` return type is constrained to `ApiError<Static<typeof globalErrors>>` when global errors are declared, keeping the type system consistent end-to-end.
 
 ## License
 

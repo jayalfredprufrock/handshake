@@ -20,7 +20,7 @@ describe("error handling", () => {
         throw new ApiError(404, { code: "NOT_FOUND" });
       },
     });
-    const app = createHonoApp(contract, [module]);
+    const app = createHonoApp([module]);
 
     const res = await app.request("/users/1");
     expect(res.status).toBe(404);
@@ -45,7 +45,7 @@ describe("error handling", () => {
         throw new ApiError(401, { code: "UNAUTHORIZED" });
       },
     });
-    const app = createHonoApp(contract, [module]);
+    const app = createHonoApp([module]);
 
     const res = await app.request("/users/1");
     expect(res.status).toBe(401);
@@ -71,7 +71,7 @@ describe("error handling", () => {
         throw new ApiError(404, { code: "NOT_FOUND" });
       },
     });
-    const app = createHonoApp(contract, [module]);
+    const app = createHonoApp([module]);
 
     const res = await app.request("/users/1");
     expect(res.status).toBe(404);
@@ -96,7 +96,7 @@ describe("error handling", () => {
         throw new Error("Database connection failed");
       },
     });
-    const app = createHonoApp(contract, [module], {
+    const app = createHonoApp([module], {
       errorHandler: () => new ApiError(500, { code: "INTERNAL_ERROR" }),
     });
 
@@ -124,7 +124,7 @@ describe("error handling", () => {
         throw new ApiError(403, { code: "FORBIDDEN" });
       },
     });
-    const app = createHonoApp(contract, [module], {
+    const app = createHonoApp([module], {
       errorHandler: () => new ApiError(500, { code: "INTERNAL_ERROR" }),
     });
 
@@ -148,7 +148,7 @@ describe("error handling", () => {
         throw new Error("unhandled");
       },
     });
-    const app = createHonoApp(contract, [module]);
+    const app = createHonoApp([module]);
 
     const res = await app.request("/users/1");
     expect(res.status).toBe(500);
@@ -174,7 +174,7 @@ describe("error handling", () => {
         throw new Error("db error");
       },
     });
-    const app = createHonoApp(combined, [module], {
+    const app = createHonoApp([module], {
       errorHandler: () => new ApiError(500, { code: "INTERNAL_ERROR" }),
     });
 
@@ -205,7 +205,7 @@ describe("error handling", () => {
         throw new Error("db error");
       },
     });
-    const app = createHonoApp(combined, [module], {
+    const app = createHonoApp([module], {
       errorHandler: () => new ApiError(500, { code: "INTERNAL_ERROR" }),
     });
 

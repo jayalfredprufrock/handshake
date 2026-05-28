@@ -1,4 +1,4 @@
-import type { Contract, Endpoint, ExtractGlobalErrors, InferSchema } from "../../contract";
+import type { Contract, Endpoint, InferSchema } from "../../contract";
 import { ApiError, computeEffectiveErrors, joinPath } from "../../contract";
 import {
   AssertError,
@@ -13,7 +13,7 @@ import {
 } from "../../server";
 import { Hono } from "hono";
 import type { Context, Env, MiddlewareHandler } from "hono";
-import type { Static, TSchema } from "typebox";
+import type { TSchema } from "typebox";
 
 type HandlerInput<E extends Endpoint, HonoEnv extends Env> = BaseHandlerInput<E> & {
   c: Context<HonoEnv>;
@@ -45,13 +45,8 @@ export interface ImplementContractOptions<HonoEnv extends Env = Env> {
   middleware?: EndpointMiddlewareFactory<HonoEnv>;
 }
 
-export interface CreateHonoAppOptions<
-  G extends TSchema | undefined = undefined,
-  HonoEnv extends Env = Env,
-> {
-  errorHandler?: G extends TSchema
-    ? (err: unknown) => ApiError<Static<G>>
-    : (err: unknown) => ApiError;
+export interface CreateHonoAppOptions<HonoEnv extends Env = Env> {
+  errorHandler?: (err: unknown) => ApiError;
   middleware?: EndpointMiddlewareFactory<HonoEnv> | EndpointMiddlewareFactory<HonoEnv>[];
 }
 
@@ -59,14 +54,8 @@ export interface RouteModule {
   _hono: Hono;
   _basePath: string;
   _endpoints: Record<string, Endpoint>;
+  _rebuild: (globalFactory: EndpointMiddlewareFactory) => Hono;
 }
-
-const methodMap = {
-  GET: "get",
-  POST: "post",
-  PATCH: "patch",
-  DELETE: "delete",
-} as const;
 
 function compareSpecificity(a: string, b: string): number {
   const aSegs = a.split("/");
@@ -102,9 +91,9 @@ function buildModule(
   handlers: Record<string, any>,
   perHandlerOptions: Record<string, HandlerOptions | undefined>,
   globalErrors: TSchema | undefined,
-  subHono: Hono,
   mountPath: string,
   moduleOptions: ImplementContractOptions,
+  groupMiddlewares: MiddlewareHandler[],
 ): RouteModule {
   const missing = Object.keys(endpoints).filter((name) => !(name in handlers));
   if (missing.length > 0) {
@@ -115,90 +104,106 @@ function buildModule(
     compareSpecificity(a.path, b.path),
   );
 
-  for (const [name, endpoint] of sorted) {
-    const handler = handlers[name];
-    const handlerOptions = perHandlerOptions[name];
+  const buildHono = (globalFactory?: EndpointMiddlewareFactory): Hono => {
+    const hono = new Hono();
 
-    const middleware = toMiddlewareArray(moduleOptions.middleware?.(endpoint));
+    for (const [name, endpoint] of sorted) {
+      const handler = handlers[name];
+      const handlerOptions = perHandlerOptions[name];
 
-    subHono.on(endpoint.method, [endpoint.path], ...middleware, async (c: Context) => {
-      const input: Record<string, unknown> = { c };
+      const preMw = globalFactory ? toMiddlewareArray(globalFactory(endpoint)) : [];
+      const contractMw = toMiddlewareArray(moduleOptions.middleware?.(endpoint));
+      const allMw = [...preMw, ...groupMiddlewares, ...contractMw];
 
-      if (endpoint.params) {
+      hono.on(endpoint.method, [endpoint.path], ...allMw, async (c: Context) => {
+        const input: Record<string, unknown> = { c };
+
+        if (endpoint.params) {
+          try {
+            input.params = parseParams(endpoint.params, c.req.param());
+          } catch (error) {
+            if (error instanceof AssertError) {
+              return c.json({ error: "Invalid path parameters", details: error.cause.errors }, 400);
+            }
+            throw error;
+          }
+        }
+
+        if (endpoint.query) {
+          try {
+            input.query = parseQuery(endpoint.query, c.req.queries() as Record<string, string[]>);
+          } catch (error) {
+            if (error instanceof AssertError) {
+              return c.json(
+                { error: "Invalid query parameters", details: error.cause.errors },
+                400,
+              );
+            }
+            if (error instanceof QueryNormalizationError) {
+              return c.json({ error: error.message }, 400);
+            }
+            throw error;
+          }
+        }
+
+        if (endpoint.body) {
+          try {
+            input.body = parseBody(endpoint.body, await c.req.json());
+          } catch (error) {
+            if (error instanceof AssertError) {
+              return c.json({ error: "Invalid request body", details: error.cause.errors }, 400);
+            }
+            throw error;
+          }
+        }
+
+        let result: unknown;
         try {
-          input.params = parseParams(endpoint.params, c.req.param());
-        } catch (error) {
-          if (error instanceof AssertError) {
-            return c.json({ error: "Invalid path parameters", details: error.cause.errors }, 400);
+          result = await handler(input as any);
+        } catch (err) {
+          const effectiveErrors = computeEffectiveErrors(globalErrors, endpoint.errors);
+          if (err instanceof ApiError) {
+            if (!effectiveErrors || checkValue(effectiveErrors, err.body)) {
+              return c.json(err.body, err.statusCode as any);
+            }
           }
-          throw error;
+          throw err;
         }
-      }
 
-      if (endpoint.query) {
-        try {
-          input.query = parseQuery(endpoint.query, c.req.queries() as Record<string, string[]>);
-        } catch (error) {
-          if (error instanceof AssertError) {
-            return c.json({ error: "Invalid query parameters", details: error.cause.errors }, 400);
-          }
-          if (error instanceof QueryNormalizationError) {
-            return c.json({ error: error.message }, 400);
-          }
-          throw error;
+        if (result instanceof Response) {
+          return result;
         }
-      }
 
-      if (endpoint.body) {
-        try {
-          input.body = parseBody(endpoint.body, await c.req.json());
-        } catch (error) {
-          if (error instanceof AssertError) {
-            return c.json({ error: "Invalid request body", details: error.cause.errors }, 400);
-          }
-          throw error;
-        }
-      }
+        const shouldValidate =
+          handlerOptions?.validateResponse ?? moduleOptions.validateResponse ?? true;
 
-      let result: unknown;
-      try {
-        result = await handler(input as any);
-      } catch (err) {
-        const effectiveErrors = computeEffectiveErrors(globalErrors, endpoint.errors);
-        if (err instanceof ApiError) {
-          if (!effectiveErrors || checkValue(effectiveErrors, err.body)) {
-            return c.json(err.body, err.statusCode as any);
+        if (shouldValidate && endpoint.response) {
+          try {
+            return c.json(parseResponse(endpoint.response, result));
+          } catch (error) {
+            if (error instanceof AssertError) {
+              return c.json(
+                { error: "Response validation failed", details: error.cause.errors },
+                500,
+              );
+            }
+            throw error;
           }
         }
-        throw err;
-      }
 
-      if (result instanceof Response) {
-        return result;
-      }
+        return c.json(result);
+      });
+    }
 
-      const shouldValidate =
-        handlerOptions?.validateResponse ?? moduleOptions.validateResponse ?? true;
+    return hono;
+  };
 
-      if (shouldValidate && endpoint.response) {
-        try {
-          return c.json(parseResponse(endpoint.response, result));
-        } catch (error) {
-          if (error instanceof AssertError) {
-            return c.json(
-              { error: "Response validation failed", details: error.cause.errors },
-              500,
-            );
-          }
-          throw error;
-        }
-      }
-
-      return c.json(result);
-    });
-  }
-
-  return { _hono: subHono, _basePath: mountPath, _endpoints: endpoints };
+  return {
+    _hono: buildHono(),
+    _basePath: mountPath,
+    _endpoints: endpoints,
+    _rebuild: buildHono,
+  };
 }
 
 // Named group, object handlers or closure
@@ -234,9 +239,9 @@ export function implementContract(
   arg3?: Record<string, any> | ((group: any) => void) | ImplementContractOptions,
   arg4?: ImplementContractOptions,
 ): RouteModule {
-  const subHono = new Hono();
   const handlers: Record<string, any> = {};
   const perHandlerOptions: Record<string, HandlerOptions | undefined> = {};
+  const groupMiddlewares: MiddlewareHandler[] = [];
 
   let endpoints: Record<string, Endpoint>;
   let mountPath: string;
@@ -263,7 +268,7 @@ export function implementContract(
   if (typeof handlersOrClosure === "function") {
     const group: GroupBuilder<any> = {
       use(middleware: MiddlewareHandler) {
-        subHono.use("*", middleware);
+        groupMiddlewares.push(middleware);
       },
       implement(name: string, handler: any, handlerOptions?: HandlerOptions) {
         handlers[name] = handler;
@@ -280,16 +285,15 @@ export function implementContract(
     handlers,
     perHandlerOptions,
     contract.globalErrors,
-    subHono,
     mountPath,
     options,
+    groupMiddlewares,
   );
 }
 
-export function createHonoApp<C extends Contract<any, any, any>, HonoEnv extends Env = Env>(
-  contract: C,
+export function createHonoApp<HonoEnv extends Env = Env>(
   modules: RouteModule[],
-  options?: CreateHonoAppOptions<ExtractGlobalErrors<C>, HonoEnv>,
+  options?: CreateHonoAppOptions<HonoEnv>,
 ): Hono {
   const root = new Hono();
 
@@ -308,20 +312,14 @@ export function createHonoApp<C extends Contract<any, any, any>, HonoEnv extends
       : [options.middleware]
     : [];
 
-  if (middlewareFactories.length > 0) {
-    for (const module of modules) {
-      for (const endpoint of Object.values(module._endpoints)) {
-        const fullPath = module._basePath + endpoint.path;
-        const middleware = middlewareFactories.flatMap((f) => toMiddlewareArray(f(endpoint)));
-        if (middleware.length > 0) {
-          root.on(endpoint.method, [fullPath || "/"], ...middleware);
-        }
-      }
-    }
-  }
+  const globalFactory: EndpointMiddlewareFactory | undefined =
+    middlewareFactories.length > 0
+      ? (endpoint) => middlewareFactories.flatMap((f) => toMiddlewareArray(f(endpoint)))
+      : undefined;
 
   for (const module of modules) {
-    root.route(module._basePath || "/", module._hono);
+    const hono = globalFactory ? module._rebuild(globalFactory) : module._hono;
+    root.route(module._basePath || "/", hono);
   }
 
   return root;

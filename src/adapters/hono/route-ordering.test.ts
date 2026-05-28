@@ -23,7 +23,7 @@ describe("route ordering", () => {
       getUser: ({ params }) => ({ source: "param" as const, id: params.id }),
       getMe: () => ({ source: "literal" as const, id: "me" as const }),
     });
-    const app = createHonoApp(contract, [module]);
+    const app = createHonoApp([module]);
 
     const res = await app.request("/users/me");
     expect(res.status).toBe(200);
@@ -49,7 +49,7 @@ describe("route ordering", () => {
       getUser: ({ params }) => ({ source: "param" as const, id: params.id }),
       getMe: () => ({ source: "literal" as const, id: "me" as const }),
     });
-    const app = createHonoApp(contract, [module]);
+    const app = createHonoApp([module]);
 
     const res = await app.request("/users/42");
     expect(res.status).toBe(200);
@@ -75,7 +75,7 @@ describe("route ordering", () => {
       getUser: () => ({ source: "param" }),
       getMe: () => ({ source: "literal" }),
     });
-    const app = createHonoApp(contract, [module]);
+    const app = createHonoApp([module]);
 
     const res = await app.request("/users/me");
     expect(res.status).toBe(200);
@@ -101,7 +101,7 @@ describe("route ordering", () => {
       userPosts: () => ({ route: "userPosts" as const }),
       myPosts: () => ({ route: "myPosts" as const }),
     });
-    const app = createHonoApp(contract, [module]);
+    const app = createHonoApp([module]);
 
     const meRes = await app.request("/users/me/posts");
     expect(await meRes.json()).toEqual({ route: "myPosts" });

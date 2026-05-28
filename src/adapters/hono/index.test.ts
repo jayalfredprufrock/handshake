@@ -30,7 +30,7 @@ describe("hono adapter", () => {
       },
       createUser: ({ body }) => ({ id: "1", name: body.name }),
     });
-    const app = createHonoApp(contract, [module]);
+    const app = createHonoApp([module]);
 
     const res = await app.request("/api/users/1", {
       headers: { "x-test": "hello" },
@@ -43,7 +43,7 @@ describe("hono adapter", () => {
       getUser: ({ params }) => ({ id: params.id, name: "Alice" }),
       createUser: ({ body }) => ({ id: "1", name: body.name }),
     });
-    const app = createHonoApp(contract, [module]);
+    const app = createHonoApp([module]);
 
     const res = await app.request("/api/users/1");
     expect(res.status).toBe(200);
@@ -55,7 +55,7 @@ describe("hono adapter", () => {
       group.implement("getUser", ({ params }) => ({ id: params.id, name: "Alice" }));
       group.implement("createUser", ({ body }) => ({ id: "1", name: body.name }));
     });
-    const app = createHonoApp(contract, [module]);
+    const app = createHonoApp([module]);
 
     const res = await app.request("/api/users/1");
     expect(res.status).toBe(200);
@@ -65,7 +65,7 @@ describe("hono adapter", () => {
   test("applies middleware in closure form", async () => {
     const calls: string[] = [];
     const module = implementContract(contract, (group) => {
-      group.use(async (c, next) => {
+      group.use(async (_c, next) => {
         calls.push("middleware");
         await next();
       });
@@ -75,10 +75,20 @@ describe("hono adapter", () => {
       });
       group.implement("createUser", ({ body }) => ({ id: "1", name: body.name }));
     });
-    const app = createHonoApp(contract, [module]);
+    const app = createHonoApp([module]);
 
+    // param path
     await app.request("/api/users/1");
     expect(calls).toEqual(["middleware", "handler"]);
+
+    // static path (no path params) — regression: group.use must also run here
+    calls.length = 0;
+    await app.request("/api/users", {
+      method: "POST",
+      body: JSON.stringify({ name: "Bob" }),
+      headers: { "content-type": "application/json" },
+    });
+    expect(calls).toEqual(["middleware"]);
   });
 
   test("assembles multiple modules", async () => {
@@ -98,7 +108,7 @@ describe("hono adapter", () => {
       getUser: ({ params }) => ({ id: params.id }),
     });
     const healthModule = implementContract(healthContract, { health: () => ({ ok: true }) });
-    const app = createHonoApp(usersContract, [usersModule, healthModule]);
+    const app = createHonoApp([usersModule, healthModule]);
 
     expect((await app.request("/users/1")).status).toBe(200);
     expect((await app.request("/health")).status).toBe(200);
@@ -134,7 +144,7 @@ describe("hono adapter", () => {
       const postsModule = implementContract(combined, "posts", {
         listPosts: () => [],
       });
-      const app = createHonoApp(combined, [usersModule, postsModule]);
+      const app = createHonoApp([usersModule, postsModule]);
 
       expect((await app.request("/api/users/1")).status).toBe(200);
       expect(await (await app.request("/api/users/1")).json()).toEqual({ id: "1", name: "Alice" });
@@ -153,7 +163,7 @@ describe("hono adapter", () => {
         });
         group.implement("getUser", ({ params }) => ({ id: params.id, name: "Alice" }));
       });
-      const app = createHonoApp(combined, [usersModule]);
+      const app = createHonoApp([usersModule]);
 
       await app.request("/api/users/1", { headers: { "x-group": "users" } });
       expect(headerValues).toEqual(["users"]);
@@ -195,16 +205,29 @@ describe("hono adapter", () => {
           calls.push("handler");
           return { id: params.id, name: "Alice" };
         },
-        createUser: ({ body }) => ({ id: "1", name: body.name }),
+        createUser: ({ body }) => {
+          calls.push("handler");
+          return { id: "1", name: body.name };
+        },
       });
-      const app = createHonoApp(contract, [module], {
+      const app = createHonoApp([module], {
         middleware: () => async (_c, next) => {
           calls.push("global");
           await next();
         },
       });
 
+      // param path
       await app.request("/api/users/1");
+      expect(calls).toEqual(["global", "handler"]);
+
+      // static path (no path params) — regression: this was the reported bug
+      calls.length = 0;
+      await app.request("/api/users", {
+        method: "POST",
+        body: JSON.stringify({ name: "Bob" }),
+        headers: { "content-type": "application/json" },
+      });
       expect(calls).toEqual(["global", "handler"]);
     });
 
@@ -221,7 +244,7 @@ describe("hono adapter", () => {
         });
         group.implement("createUser", ({ body }) => ({ id: "1", name: body.name }));
       });
-      const app = createHonoApp(contract, [module], {
+      const app = createHonoApp([module], {
         middleware: () => async (_c, next) => {
           calls.push("global");
           await next();
@@ -238,7 +261,7 @@ describe("hono adapter", () => {
         getUser: ({ params }) => ({ id: params.id, name: "Alice" }),
         createUser: ({ body }) => ({ id: "1", name: body.name }),
       });
-      createHonoApp(contract, [module], {
+      createHonoApp([module], {
         middleware: (endpoint) => {
           seenEndpoints.push(endpoint);
           return undefined;
@@ -258,7 +281,7 @@ describe("hono adapter", () => {
         },
         createUser: ({ body }) => ({ id: "1", name: body.name }),
       });
-      const app = createHonoApp(contract, [module], {
+      const app = createHonoApp([module], {
         middleware: [
           () => async (_c, next) => {
             calls.push("first");
@@ -281,7 +304,7 @@ describe("hono adapter", () => {
         getUser: ({ params }) => ({ id: params.id, name: "Alice" }),
         createUser: ({ body }) => ({ id: "1", name: body.name }),
       });
-      const app = createHonoApp(contract, [module], {
+      const app = createHonoApp([module], {
         middleware: (endpoint) => {
           if (endpoint.method === "GET") {
             return async (_c, next) => {

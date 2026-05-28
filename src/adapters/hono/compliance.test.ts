@@ -24,7 +24,7 @@ runAdapterTests((contract, options) => {
         },
         options,
       );
-      const app = createHonoApp(contract, [module]);
+      const app = createHonoApp([module]);
       return {
         request: (url: string, init?: RequestInit) => Promise.resolve(app.request(url, init)),
       };
