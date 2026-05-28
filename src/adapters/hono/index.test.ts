@@ -1,6 +1,7 @@
 import { describe, expect, expectTypeOf, test } from "vite-plus/test";
 import * as T from "typebox";
 import type { Static } from "typebox";
+import type { Endpoint } from "../../contract";
 import { createContract } from "../../contract";
 import { implementContract, createHonoApp } from "./index";
 
@@ -183,6 +184,96 @@ describe("hono adapter", () => {
         },
         createUser: ({ body }) => ({ id: "1", name: body.name }),
       });
+    });
+  });
+
+  describe("createHonoApp middleware", () => {
+    test("runs global middleware for matching endpoints", async () => {
+      const calls: string[] = [];
+      const module = implementContract(contract, {
+        getUser: ({ params }) => {
+          calls.push("handler");
+          return { id: params.id, name: "Alice" };
+        },
+        createUser: ({ body }) => ({ id: "1", name: body.name }),
+      });
+      const app = createHonoApp(contract, [module], {
+        middleware: () => async (_c, next) => {
+          calls.push("global");
+          await next();
+        },
+      });
+
+      await app.request("/api/users/1");
+      expect(calls).toEqual(["global", "handler"]);
+    });
+
+    test("runs global middleware before per-contract middleware", async () => {
+      const calls: string[] = [];
+      const module = implementContract(contract, (group) => {
+        group.use(async (_c, next) => {
+          calls.push("contract");
+          await next();
+        });
+        group.implement("getUser", ({ params }) => {
+          calls.push("handler");
+          return { id: params.id, name: "Alice" };
+        });
+        group.implement("createUser", ({ body }) => ({ id: "1", name: body.name }));
+      });
+      const app = createHonoApp(contract, [module], {
+        middleware: () => async (_c, next) => {
+          calls.push("global");
+          await next();
+        },
+      });
+
+      await app.request("/api/users/1");
+      expect(calls).toEqual(["global", "contract", "handler"]);
+    });
+
+    test("factory receives endpoint data", async () => {
+      const seenEndpoints: Endpoint[] = [];
+      const module = implementContract(contract, {
+        getUser: ({ params }) => ({ id: params.id, name: "Alice" }),
+        createUser: ({ body }) => ({ id: "1", name: body.name }),
+      });
+      createHonoApp(contract, [module], {
+        middleware: (endpoint) => {
+          seenEndpoints.push(endpoint);
+          return undefined;
+        },
+      });
+
+      expect(seenEndpoints).toHaveLength(2);
+      expect(seenEndpoints.map((e) => e.method).sort()).toEqual(["GET", "POST"]);
+    });
+
+    test("skips endpoints where factory returns undefined", async () => {
+      const calls: string[] = [];
+      const module = implementContract(contract, {
+        getUser: ({ params }) => ({ id: params.id, name: "Alice" }),
+        createUser: ({ body }) => ({ id: "1", name: body.name }),
+      });
+      const app = createHonoApp(contract, [module], {
+        middleware: (endpoint) => {
+          if (endpoint.method === "GET") {
+            return async (_c, next) => {
+              calls.push("global-get");
+              await next();
+            };
+          }
+          return undefined;
+        },
+      });
+
+      await app.request("/api/users/1");
+      await app.request("/api/users", {
+        method: "POST",
+        body: JSON.stringify({ name: "Bob" }),
+        headers: { "content-type": "application/json" },
+      });
+      expect(calls).toEqual(["global-get"]);
     });
   });
 

@@ -45,15 +45,20 @@ export interface ImplementContractOptions<HonoEnv extends Env = Env> {
   middleware?: EndpointMiddlewareFactory<HonoEnv>;
 }
 
-export interface CreateHonoAppOptions<G extends TSchema | undefined = undefined> {
+export interface CreateHonoAppOptions<
+  G extends TSchema | undefined = undefined,
+  HonoEnv extends Env = Env,
+> {
   errorHandler?: G extends TSchema
     ? (err: unknown) => ApiError<Static<G>>
     : (err: unknown) => ApiError;
+  middleware?: EndpointMiddlewareFactory<HonoEnv>;
 }
 
 export interface RouteModule {
   _hono: Hono;
   _basePath: string;
+  _endpoints: Record<string, Endpoint>;
 }
 
 const methodMap = {
@@ -193,7 +198,7 @@ function buildModule(
     });
   }
 
-  return { _hono: subHono, _basePath: mountPath };
+  return { _hono: subHono, _basePath: mountPath, _endpoints: endpoints };
 }
 
 // Named group, object handlers or closure
@@ -281,10 +286,10 @@ export function implementContract(
   );
 }
 
-export function createHonoApp<C extends Contract<any, any, any>>(
+export function createHonoApp<C extends Contract<any, any, any>, HonoEnv extends Env = Env>(
   contract: C,
   modules: RouteModule[],
-  options?: CreateHonoAppOptions<ExtractGlobalErrors<C>>,
+  options?: CreateHonoAppOptions<ExtractGlobalErrors<C>, HonoEnv>,
 ): Hono {
   const root = new Hono();
 
@@ -296,6 +301,19 @@ export function createHonoApp<C extends Contract<any, any, any>>(
     }
     return c.json({ error: "Internal Server Error" }, 500);
   });
+
+  if (options?.middleware) {
+    const factory = options.middleware;
+    for (const module of modules) {
+      for (const endpoint of Object.values(module._endpoints)) {
+        const fullPath = module._basePath + endpoint.path;
+        const middleware = toMiddlewareArray(factory(endpoint));
+        if (middleware.length > 0) {
+          root.on(endpoint.method, [fullPath || "/"], ...middleware);
+        }
+      }
+    }
+  }
 
   for (const module of modules) {
     root.route(module._basePath || "/", module._hono);
