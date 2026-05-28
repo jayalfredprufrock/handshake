@@ -71,8 +71,13 @@ export type EffectiveErrors<
   E extends TSchema | undefined,
 > = G extends TSchema ? (E extends TSchema ? TUnion<[G, E]> : G) : E;
 
+type EndpointErrorSchema<E> = E extends { errors: infer S extends TSchema } ? S : undefined;
+
 export type ContractErrors<C extends Contract<any, any, any>> = {
-  [K in keyof C["endpoints"]]: EffectiveErrors<ExtractGlobalErrors<C>, C["endpoints"][K]["errors"]>;
+  [K in keyof C["endpoints"]]: EffectiveErrors<
+    ExtractGlobalErrors<C>,
+    EndpointErrorSchema<C["endpoints"][K]>
+  >;
 };
 
 export type ContractSchema<C extends Contract<any, any, any>> = {

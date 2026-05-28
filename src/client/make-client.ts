@@ -11,10 +11,10 @@ type ErrorCodes<S extends TSchema> = Static<S> extends { code: infer C } ? C & s
 
 export type EndpointErrorGuard<S extends TSchema | undefined> = S extends TSchema
   ? {
-      (err: unknown): err is ApiError<Static<S>>;
       <C extends ErrorCodes<S>>(
         code: C,
       ): (err: unknown) => err is ApiError<Extract<Static<S>, { code: C }>>;
+      (err: unknown): err is ApiError<Static<S>>;
     }
   : (err: unknown) => err is ApiError;
 

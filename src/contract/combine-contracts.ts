@@ -50,13 +50,15 @@ export function combineContracts<
 export function combineContracts(
   contracts: readonly Contract<any, any>[] | Record<string, Contract<any, any>>,
   options?: CombineContractsOptions<any>,
-): Contract {
+): Contract<any, any, any> {
   const basePath = options?.basePath ?? "/";
   const endpoints: Record<string, Endpoint> = {};
 
   if (Array.isArray(contracts)) {
     for (const contract of contracts) {
-      for (const [name, endpoint] of Object.entries(contract.endpoints)) {
+      for (const [name, endpoint] of Object.entries(
+        contract.endpoints as Record<string, Endpoint>,
+      )) {
         if (name in endpoints)
           throw new Error(`Duplicate endpoint name "${name}" in combined contracts`);
         endpoints[name] = { ...endpoint, path: joinPath(contract.basePath, endpoint.path) };
@@ -67,7 +69,7 @@ export function combineContracts(
 
   const named = contracts as Record<string, Contract<any, any>>;
   for (const [, contract] of Object.entries(named)) {
-    for (const [name, endpoint] of Object.entries(contract.endpoints)) {
+    for (const [name, endpoint] of Object.entries(contract.endpoints as Record<string, Endpoint>)) {
       if (name in endpoints)
         throw new Error(`Duplicate endpoint name "${name}" in combined contracts`);
       endpoints[name] = { ...endpoint, path: joinPath(contract.basePath, endpoint.path) };

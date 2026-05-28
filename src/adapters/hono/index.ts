@@ -27,6 +27,10 @@ type HandlerMap<E extends Record<string, Endpoint>, HonoEnv extends Env = Env> =
   [K in keyof E]: Handler<E[K], HonoEnv>;
 };
 
+export type EndpointMiddlewareFactory<HonoEnv extends Env = Env> = (
+  endpoint: Endpoint,
+) => MiddlewareHandler<HonoEnv> | MiddlewareHandler<HonoEnv>[] | undefined;
+
 export interface GroupBuilder<E extends Record<string, Endpoint>, HonoEnv extends Env = Env> {
   use(middleware: MiddlewareHandler<HonoEnv>): void;
   implement<K extends keyof E & string>(
@@ -36,8 +40,9 @@ export interface GroupBuilder<E extends Record<string, Endpoint>, HonoEnv extend
   ): void;
 }
 
-export interface ImplementContractOptions {
+export interface ImplementContractOptions<HonoEnv extends Env = Env> {
   validateResponse?: boolean;
+  middleware?: EndpointMiddlewareFactory<HonoEnv>;
 }
 
 export interface CreateHonoAppOptions<G extends TSchema | undefined = undefined> {
@@ -80,6 +85,13 @@ function normalizeMountPath(basePath: string): string {
   return basePath === "/" ? "" : basePath;
 }
 
+function toMiddlewareArray(
+  value: MiddlewareHandler | MiddlewareHandler[] | undefined,
+): MiddlewareHandler[] {
+  if (value == null) return [];
+  return Array.isArray(value) ? value : [value];
+}
+
 function buildModule(
   endpoints: Record<string, Endpoint>,
   handlers: Record<string, any>,
@@ -101,9 +113,10 @@ function buildModule(
   for (const [name, endpoint] of sorted) {
     const handler = handlers[name];
     const handlerOptions = perHandlerOptions[name];
-    const method = methodMap[endpoint.method];
 
-    subHono[method](endpoint.path, async (c: Context) => {
+    const middleware = toMiddlewareArray(moduleOptions.middleware?.(endpoint));
+
+    subHono.on(endpoint.method, [endpoint.path], ...middleware, async (c: Context) => {
       const input: Record<string, unknown> = { c };
 
       if (endpoint.params) {
@@ -196,7 +209,7 @@ export function implementContract<
   handlersOrClosure:
     | HandlerMap<N[K]["endpoints"], HonoEnv>
     | ((group: GroupBuilder<N[K]["endpoints"], HonoEnv>) => void),
-  options?: ImplementContractOptions,
+  options?: ImplementContractOptions<HonoEnv>,
 ): RouteModule;
 
 // Unnamed, object handlers or closure
@@ -207,7 +220,7 @@ export function implementContract<
 >(
   contract: Contract<C, G, any>,
   handlersOrClosure: HandlerMap<C, HonoEnv> | ((group: GroupBuilder<C, HonoEnv>) => void),
-  options?: ImplementContractOptions,
+  options?: ImplementContractOptions<HonoEnv>,
 ): RouteModule;
 
 export function implementContract(

@@ -189,7 +189,7 @@ describe("hono adapter", () => {
   test("throws at implementContract time when a handler is missing", () => {
     expect(() => {
       implementContract(contract, {
-        getUser: ({ params }) => ({ id: params.id, name: "Alice" }),
+        getUser: () => ({ id: "1", name: "Alice" }),
         // createUser missing
       } as any);
     }).toThrow(/Missing handlers/);

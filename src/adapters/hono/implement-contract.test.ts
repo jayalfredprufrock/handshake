@@ -231,7 +231,7 @@ describe("error handling", () => {
 
     expect(() => {
       implementContract(contract, {
-        getUser: ({ params }) => ({ id: params.id }),
+        getUser: () => ({ id: "1" }),
         // listUsers not implemented
       } as any);
     }).toThrow(/Missing handlers/);
