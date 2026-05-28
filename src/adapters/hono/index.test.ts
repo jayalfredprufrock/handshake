@@ -249,6 +249,32 @@ describe("hono adapter", () => {
       expect(seenEndpoints.map((e) => e.method).sort()).toEqual(["GET", "POST"]);
     });
 
+    test("accepts an array of factories, applying each in order", async () => {
+      const calls: string[] = [];
+      const module = implementContract(contract, {
+        getUser: ({ params }) => {
+          calls.push("handler");
+          return { id: params.id, name: "Alice" };
+        },
+        createUser: ({ body }) => ({ id: "1", name: body.name }),
+      });
+      const app = createHonoApp(contract, [module], {
+        middleware: [
+          () => async (_c, next) => {
+            calls.push("first");
+            await next();
+          },
+          () => async (_c, next) => {
+            calls.push("second");
+            await next();
+          },
+        ],
+      });
+
+      await app.request("/api/users/1");
+      expect(calls).toEqual(["first", "second", "handler"]);
+    });
+
     test("skips endpoints where factory returns undefined", async () => {
       const calls: string[] = [];
       const module = implementContract(contract, {

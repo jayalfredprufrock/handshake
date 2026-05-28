@@ -52,7 +52,7 @@ export interface CreateHonoAppOptions<
   errorHandler?: G extends TSchema
     ? (err: unknown) => ApiError<Static<G>>
     : (err: unknown) => ApiError;
-  middleware?: EndpointMiddlewareFactory<HonoEnv>;
+  middleware?: EndpointMiddlewareFactory<HonoEnv> | EndpointMiddlewareFactory<HonoEnv>[];
 }
 
 export interface RouteModule {
@@ -302,12 +302,17 @@ export function createHonoApp<C extends Contract<any, any, any>, HonoEnv extends
     return c.json({ error: "Internal Server Error" }, 500);
   });
 
-  if (options?.middleware) {
-    const factory = options.middleware;
+  const middlewareFactories = options?.middleware
+    ? Array.isArray(options.middleware)
+      ? options.middleware
+      : [options.middleware]
+    : [];
+
+  if (middlewareFactories.length > 0) {
     for (const module of modules) {
       for (const endpoint of Object.values(module._endpoints)) {
         const fullPath = module._basePath + endpoint.path;
-        const middleware = toMiddlewareArray(factory(endpoint));
+        const middleware = middlewareFactories.flatMap((f) => toMiddlewareArray(f(endpoint)));
         if (middleware.length > 0) {
           root.on(endpoint.method, [fullPath || "/"], ...middleware);
         }
