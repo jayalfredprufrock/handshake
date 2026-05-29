@@ -129,7 +129,7 @@ export const createFetchClient = <
   G extends TSchema | undefined = undefined,
   F extends (input: string | URL, init?: any) => Promise<unknown> = FetchFn,
 >(
-  contract: Contract<C, G>,
+  contract: Contract<C, G, any>,
   config: FetchClientConfig<F>,
 ): Client<C, G, InferRequestOptions<F>> => {
   const basePath = contract.basePath === "/" ? "" : contract.basePath;
