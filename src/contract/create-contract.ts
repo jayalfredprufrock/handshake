@@ -64,7 +64,7 @@ export function createContract(
   };
 }
 
-export type ExtractGlobalErrors<C> = C extends Contract<any, infer G> ? G : undefined;
+export type ExtractGlobalErrors<C> = C extends Contract<any, infer G, any> ? G : undefined;
 
 export type EffectiveErrors<
   G extends TSchema | undefined,

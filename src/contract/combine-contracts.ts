@@ -5,7 +5,7 @@ type UnionToIntersection<U> = (U extends any ? (x: U) => void : never) extends (
   ? I
   : never;
 
-type EndpointsOf<C> = C extends Contract<infer E, any> ? E : never;
+type EndpointsOf<C> = C extends Contract<infer E, any, any> ? E : never;
 
 type MergedEndpoints<T extends readonly Contract<any, any>[]> =
   UnionToIntersection<EndpointsOf<T[number]>> extends infer M

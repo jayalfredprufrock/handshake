@@ -102,6 +102,30 @@ describe("combineContracts", () => {
       expectTypeOf(combined.endpoints).toHaveProperty("getPost");
     });
 
+    test("named-record combine result is not dropped when re-combined", () => {
+      const named = combineContracts({ users, posts });
+      const extra = createContract("/extra", {
+        ping: { method: "GET", path: "/ping", response: T.Object({ ok: T.Boolean() }) },
+      });
+      const combined = combineContracts([named, extra]);
+      expectTypeOf(combined.endpoints).toHaveProperty("getUser");
+      expectTypeOf(combined.endpoints).toHaveProperty("listUsers");
+      expectTypeOf(combined.endpoints).toHaveProperty("getPost");
+      expectTypeOf(combined.endpoints).toHaveProperty("ping");
+    });
+
+    test("named-record combine result is not dropped when re-combined via named record", () => {
+      const named = combineContracts({ users, posts });
+      const extra = createContract("/extra", {
+        ping: { method: "GET", path: "/ping", response: T.Object({ ok: T.Boolean() }) },
+      });
+      const combined = combineContracts({ named, extra });
+      expectTypeOf(combined.endpoints).toHaveProperty("getUser");
+      expectTypeOf(combined.endpoints).toHaveProperty("listUsers");
+      expectTypeOf(combined.endpoints).toHaveProperty("getPost");
+      expectTypeOf(combined.endpoints).toHaveProperty("ping");
+    });
+
     test("ContractErrors merges globalErrors with per-route errors", () => {
       const GlobalErrors = T.Union([
         T.Object({ code: T.Literal("NOT_FOUND") }),
