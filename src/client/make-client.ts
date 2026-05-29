@@ -107,6 +107,11 @@ type InferRequestOptions<F> = F extends (input: any, init?: infer I) => any
   ? Omit<NonNullable<I>, "method" | "body">
   : Omit<RequestInit, "method" | "body">;
 
+export type ClientOf<
+  C extends Contract<any, any, any>,
+  F extends (input: string | URL, init?: any) => Promise<unknown> = FetchFn,
+> = C extends Contract<infer E, infer G, any> ? Client<E, G, InferRequestOptions<F>> : never;
+
 export interface FetchClientConfig<
   F extends (input: string | URL, init?: any) => Promise<unknown> = FetchFn,
 > {
