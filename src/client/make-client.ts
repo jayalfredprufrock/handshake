@@ -2,9 +2,9 @@ import type { Static, TSchema } from "typebox";
 import type { Contract, Endpoint, EffectiveErrors, InferSchema } from "../contract";
 import { ApiError, computeEffectiveErrors } from "../contract";
 
-export type ClientOptions<E extends Endpoint> = {
+export type ClientOptions<E extends Endpoint, R = Omit<RequestInit, "method" | "body">> = {
   query?: InferSchema<E["query"]>;
-  request?: Omit<RequestInit, "method" | "body">;
+  request?: R;
 };
 
 type ErrorCodes<S extends TSchema> = Static<S> extends { code: infer C } ? C & string : string;
@@ -18,30 +18,34 @@ export type EndpointErrorGuard<S extends TSchema | undefined> = S extends TSchem
     }
   : (err: unknown) => err is ApiError;
 
-export type ClientEndpoint<E extends Endpoint> = E["params"] extends TSchema
+export type ClientEndpoint<
+  E extends Endpoint,
+  R = Omit<RequestInit, "method" | "body">,
+> = E["params"] extends TSchema
   ? E["body"] extends TSchema
     ? (
         params: InferSchema<E["params"]>,
         body: InferSchema<E["body"]>,
-        options?: ClientOptions<E>,
+        options?: ClientOptions<E, R>,
       ) => Promise<InferSchema<E["response"]>>
     : (
         params: InferSchema<E["params"]>,
-        options?: ClientOptions<E>,
+        options?: ClientOptions<E, R>,
       ) => Promise<InferSchema<E["response"]>>
   : E["body"] extends TSchema
     ? (
         body: InferSchema<E["body"]>,
-        options?: ClientOptions<E>,
+        options?: ClientOptions<E, R>,
       ) => Promise<InferSchema<E["response"]>>
-    : (options?: ClientOptions<E>) => Promise<InferSchema<E["response"]>>;
+    : (options?: ClientOptions<E, R>) => Promise<InferSchema<E["response"]>>;
 
 export type Client<
   C extends Record<string, Endpoint>,
   G extends TSchema | undefined = undefined,
+  R = Omit<RequestInit, "method" | "body">,
 > = {
   [E in keyof C]: C[E] &
-    ClientEndpoint<C[E]> & {
+    ClientEndpoint<C[E], R> & {
       isApiError: EndpointErrorGuard<EffectiveErrors<G, C[E]["errors"]>>;
     };
 };
@@ -99,8 +103,14 @@ export type FetchFn = (
   init?: Omit<RequestInit, "signal"> & { signal?: IsomorphicSignal },
 ) => Promise<unknown>;
 
-export interface FetchClientConfig {
-  fetch: FetchFn;
+type InferRequestOptions<F> = F extends (input: any, init?: infer I) => any
+  ? Omit<NonNullable<I>, "method" | "body">
+  : Omit<RequestInit, "method" | "body">;
+
+export interface FetchClientConfig<
+  F extends (input: string | URL, init?: any) => Promise<unknown> = FetchFn,
+> {
+  fetch: F;
   baseUrl: string;
 }
 
@@ -117,10 +127,11 @@ function makeEndpointIsApiError(_effectiveErrors: TSchema | undefined) {
 export const createFetchClient = <
   C extends Record<string, Endpoint>,
   G extends TSchema | undefined = undefined,
+  F extends (input: string | URL, init?: any) => Promise<unknown> = FetchFn,
 >(
   contract: Contract<C, G>,
-  config: FetchClientConfig,
-): Client<C, G> => {
+  config: FetchClientConfig<F>,
+): Client<C, G, InferRequestOptions<F>> => {
   const basePath = contract.basePath === "/" ? "" : contract.basePath;
   return Object.fromEntries(
     Object.entries(contract.endpoints).map(([name, endpoint]) => {
