@@ -39,6 +39,8 @@ const removeUndefined = <T>(obj: Record<string, T>): Record<string, string> => {
 // TODO: errors below shouldnt get swallowed,
 // especially need to catch network-level fetch errors
 
+export type MakeFetchFn = ReturnType<typeof makeFetch>;
+
 export const makeFetch = (
   fetch: any,
   defaultFetchOptionsOrFunc?: DefaultFetchOptions | (() => Promise<DefaultFetchOptions>),
