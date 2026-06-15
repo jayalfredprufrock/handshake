@@ -1,49 +1,44 @@
-import {
-  type Static,
-  type TArray,
-  type TKeysToIndexer,
-  type TOmit,
-  type TPartial,
-  type TPick,
-  type TSchema,
-} from "typebox";
+import { type TArray, type TPartial, type TSchema } from "typebox";
 import * as T from "typebox";
+import { DeepOmit, DeepPick } from "../typebox";
+import type { DeepKeyOf, TDeepOmit, TDeepPick } from "../typebox";
 import type { EndpointMeta, MetaField } from "./create-contract";
 
-export type Merge2<A, B> = A extends string[]
-  ? B extends string[]
+export type Merge2<A, B> = A extends readonly string[]
+  ? B extends readonly string[]
     ? [...A, ...B]
     : A
-  : B extends string[]
+  : B extends readonly string[]
     ? B
     : [];
 
 export type Merge3<A, B, C> = Merge2<Merge2<A, B>, C>;
 
-export type TryPick<T extends TSchema, P> = P extends PropertyKey[]
-  ? TPick<T, TKeysToIndexer<P>>
+export type TryPick<T extends TSchema, P> = P extends readonly string[]
+  ? TDeepPick<T, P[number]>
   : T;
 
-export type TryOmit<T extends TSchema, O> = O extends PropertyKey[]
-  ? TOmit<T, TKeysToIndexer<O>>
+export type TryOmit<T extends TSchema, O> = O extends readonly string[]
+  ? TDeepOmit<T, O[number]>
   : T;
 
-export type MakePath<B extends string, P> = P extends [infer P1, ...infer R]
+export type MakePath<B extends string, P> = P extends readonly [infer P1, ...infer R]
   ? P1 extends string
     ? MakePath<`${B}/:${P1}`, R>
     : B
   : B;
 
-export type AllKeys<T> = Extract<T extends any ? keyof T : never, string>;
+/** Top-level keys across every object member of a schema (path params are not nested). */
+export type TopKeyOf<T extends TSchema> = Exclude<DeepKeyOf<T>, `${string}.${string}`>;
 
-export type CrudContractConfig<S> = {
-  params: AllKeys<S>[];
-  hidden?: AllKeys<S>[];
-  readonly?: AllKeys<S>[];
-  immutable?: AllKeys<S>[];
+export type CrudContractConfig<T extends TSchema> = {
+  params: TopKeyOf<T>[];
+  hidden?: DeepKeyOf<T>[];
+  readonly?: DeepKeyOf<T>[];
+  immutable?: DeepKeyOf<T>[];
 } & MetaField<EndpointMeta>;
 
-export type CrudContract<T extends TSchema, C extends CrudContractConfig<Static<T>>> = {
+export type CrudContract<T extends TSchema, C extends CrudContractConfig<T>> = {
   get: {
     method: "GET";
     path: MakePath<"", C["params"]>;
@@ -76,7 +71,7 @@ export type CrudContract<T extends TSchema, C extends CrudContractConfig<Static<
   } & MetaField<EndpointMeta>;
 };
 
-export const createCrud = <T extends TSchema, const C extends CrudContractConfig<Static<T>>>(
+export const createCrud = <T extends TSchema, const C extends CrudContractConfig<T>>(
   schema: T,
   config: C,
 ): CrudContract<T, C> => {
@@ -85,14 +80,12 @@ export const createCrud = <T extends TSchema, const C extends CrudContractConfig
       "",
       C["params"]
     >;
-  const response = (config.hidden ? T.Omit(schema, config.hidden) : schema) as TryOmit<
-    T,
-    C["hidden"]
-  >;
-  const params = T.Pick(schema, config.params) as any;
-  const hidden = config.hidden ?? [];
-  const ro = config.readonly ?? [];
-  const immutable = config.immutable ?? [];
+  const hidden = (config.hidden ?? []) as DeepKeyOf<T>[];
+  const ro = (config.readonly ?? []) as DeepKeyOf<T>[];
+  const immutable = (config.immutable ?? []) as DeepKeyOf<T>[];
+
+  const response = (config.hidden ? DeepOmit(schema, hidden) : schema) as TryOmit<T, C["hidden"]>;
+  const params = DeepPick(schema, config.params as DeepKeyOf<T>[]) as any;
   const meta = (config as { meta?: EndpointMeta }).meta;
   const metaField = meta !== undefined ? { meta } : {};
 
@@ -104,7 +97,7 @@ export const createCrud = <T extends TSchema, const C extends CrudContractConfig
       method: "POST",
       path: "/",
       response,
-      body: T.Omit(schema, [...hidden, ...ro]) as any,
+      body: DeepOmit(schema, [...hidden, ...ro]) as any,
       ...metaField,
     },
     update: {
@@ -112,7 +105,7 @@ export const createCrud = <T extends TSchema, const C extends CrudContractConfig
       path: paramsPath,
       response,
       params,
-      body: T.Partial(T.Omit(schema, [...hidden, ...ro, ...immutable])) as any,
+      body: T.Partial(DeepOmit(schema, [...hidden, ...ro, ...immutable])) as any,
       ...metaField,
     },
   } as CrudContract<T, C>;

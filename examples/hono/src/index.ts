@@ -36,7 +36,7 @@ const module = implementContract(contract, {
   },
 });
 
-const app = createHonoApp(contract, [module]);
+const app = createHonoApp([module]);
 
 serve({ fetch: app.fetch, port: 3000 }, (info) => {
   console.log(`Server running at http://localhost:${info.port}`);

@@ -7,14 +7,14 @@ type UnionToIntersection<U> = (U extends any ? (x: U) => void : never) extends (
 
 type EndpointsOf<C> = C extends Contract<infer E, any, any> ? E : never;
 
-type MergedEndpoints<T extends readonly Contract<any, any>[]> =
+type MergedEndpoints<T extends readonly Contract<any, any, any>[]> =
   UnionToIntersection<EndpointsOf<T[number]>> extends infer M
     ? M extends Record<string, Endpoint>
       ? M
       : never
     : never;
 
-type MergedEndpointsFromRecord<N extends Record<string, Contract<any, any>>> =
+type MergedEndpointsFromRecord<N extends Record<string, Contract<any, any, any>>> =
   UnionToIntersection<EndpointsOf<N[keyof N]>> extends infer M
     ? M extends Record<string, Endpoint>
       ? M
@@ -33,22 +33,22 @@ export interface CombineContractsOptions<G extends TSchema | undefined = undefin
   globalErrors?: G;
 }
 
-export function combineContracts<const N extends Record<string, Contract<any, any>>>(
+export function combineContracts<const N extends Record<string, Contract<any, any, any>>>(
   contracts: N,
 ): Contract<MergedEndpointsFromRecord<N>, undefined, N>;
 export function combineContracts<
-  const N extends Record<string, Contract<any, any>>,
+  const N extends Record<string, Contract<any, any, any>>,
   G extends TSchema | undefined = undefined,
 >(contracts: N, options: CombineContractsOptions<G>): Contract<MergedEndpointsFromRecord<N>, G, N>;
-export function combineContracts<const T extends readonly Contract<any, any>[]>(
+export function combineContracts<const T extends readonly Contract<any, any, any>[]>(
   contracts: T,
 ): Contract<MergedEndpoints<T>>;
 export function combineContracts<
-  const T extends readonly Contract<any, any>[],
+  const T extends readonly Contract<any, any, any>[],
   G extends TSchema | undefined = undefined,
 >(contracts: T, options: CombineContractsOptions<G>): Contract<MergedEndpoints<T>, G>;
 export function combineContracts(
-  contracts: readonly Contract<any, any>[] | Record<string, Contract<any, any>>,
+  contracts: readonly Contract<any, any, any>[] | Record<string, Contract<any, any, any>>,
   options?: CombineContractsOptions<any>,
 ): Contract<any, any, any> {
   const basePath = options?.basePath ?? "/";
@@ -67,7 +67,7 @@ export function combineContracts(
     return { basePath, endpoints, globalErrors: options?.globalErrors };
   }
 
-  const named = contracts as Record<string, Contract<any, any>>;
+  const named = contracts as Record<string, Contract<any, any, any>>;
   for (const [, contract] of Object.entries(named)) {
     for (const [name, endpoint] of Object.entries(contract.endpoints as Record<string, Endpoint>)) {
       if (name in endpoints)

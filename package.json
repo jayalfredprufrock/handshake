@@ -25,6 +25,7 @@
     "./contract": "./src/contract/index.ts",
     "./hono": "./src/adapters/hono/index.ts",
     "./server": "./src/server/index.ts",
+    "./typebox": "./src/typebox/index.ts",
     "./package.json": "./package.json"
   },
   "publishConfig": {
@@ -45,6 +46,10 @@
       "./server": {
         "import": "./dist/server.mjs",
         "require": "./dist/server.cjs"
+      },
+      "./typebox": {
+        "import": "./dist/typebox.mjs",
+        "require": "./dist/typebox.cjs"
       },
       "./package.json": "./package.json"
     }

@@ -5,7 +5,9 @@ export default defineConfig({
     "*": "vp check --fix",
   },
   fmt: {},
-  lint: { options: { typeAware: true, typeCheck: false } },
+  // `docs` (Astro) is excluded from tsconfig and uses virtual modules the
+  // type checker can't resolve, so keep it out of the type-aware lint pass.
+  lint: { ignorePatterns: ["docs/**"], options: { typeAware: true, typeCheck: true } },
   pack: {
     dts: { tsgo: true },
     exports: {
@@ -18,6 +20,7 @@ export default defineConfig({
       client: "src/client/index.ts",
       server: "src/server/index.ts",
       hono: "src/adapters/hono/index.ts",
+      typebox: "src/typebox/index.ts",
     },
   },
   run: {
