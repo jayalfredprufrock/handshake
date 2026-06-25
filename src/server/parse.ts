@@ -69,6 +69,14 @@ export function parseQuery(schema: TSchema, raw: Record<string, string[]>): unkn
 }
 
 /**
+ * Parses and validates request headers against a schema. Coerces string values and
+ * ignores headers not named in the schema (a request always carries many).
+ */
+export function parseHeaders(schema: TSchema, raw: Record<string, string>): unknown {
+  return paramsPipeline(schema, raw);
+}
+
+/**
  * Parses and validates a request body against a schema.
  * Rejects missing or extra properties. No coercion is performed.
  */

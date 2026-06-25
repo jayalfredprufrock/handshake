@@ -5,8 +5,9 @@ import type {
   EntriesOf,
   ErrorEntry,
   ErrorMap,
+  WithContractHeaders,
 } from "./create-contract";
-import { buildContract } from "./create-contract";
+import { applyContractHeaders, buildContract } from "./create-contract";
 import type { TSchema } from "typebox";
 import * as T from "typebox";
 
@@ -39,9 +40,14 @@ export function joinPath(base: string, path: string): string {
   return joined === "" ? "/" : joined;
 }
 
-export interface CombineContractsOptions<E extends ErrorMap | undefined = undefined> {
+export interface CombineContractsOptions<
+  E extends ErrorMap | undefined = undefined,
+  H extends TSchema | undefined = undefined,
+> {
   basePath?: string;
   errors?: E;
+  /** Header schema merged into every combined route's `headers`. */
+  headers?: H;
 }
 
 function mergeErrorMaps(maps: (ErrorMap | undefined)[]): ErrorMap | undefined {
@@ -65,11 +71,12 @@ export function combineContracts<const N extends Record<string, Contract<any, an
 export function combineContracts<
   const N extends Record<string, Contract<any, any, any>>,
   E extends ErrorMap | undefined = undefined,
+  H extends TSchema | undefined = undefined,
 >(
   contracts: N,
-  options: CombineContractsOptions<E>,
+  options: CombineContractsOptions<E, H>,
 ): ContractWithApi<
-  MergedEndpointsFromRecord<N>,
+  WithContractHeaders<MergedEndpointsFromRecord<N>, H>,
   (EntryOf<N[keyof N]> | EntriesOf<E>) & ErrorEntry,
   N
 >;
@@ -79,13 +86,17 @@ export function combineContracts<const T extends readonly Contract<any, any, any
 export function combineContracts<
   const T extends readonly Contract<any, any, any>[],
   E extends ErrorMap | undefined = undefined,
+  H extends TSchema | undefined = undefined,
 >(
   contracts: T,
-  options: CombineContractsOptions<E>,
-): ContractWithApi<MergedEndpoints<T>, (EntryOf<T[number]> | EntriesOf<E>) & ErrorEntry>;
+  options: CombineContractsOptions<E, H>,
+): ContractWithApi<
+  WithContractHeaders<MergedEndpoints<T>, H>,
+  (EntryOf<T[number]> | EntriesOf<E>) & ErrorEntry
+>;
 export function combineContracts(
   contracts: readonly Contract<any, any, any>[] | Record<string, Contract<any, any, any>>,
-  options?: CombineContractsOptions<any>,
+  options?: CombineContractsOptions<any, any>,
 ): any {
   const basePath = options?.basePath ?? "/";
   const endpoints: Record<string, Endpoint> = {};
@@ -105,12 +116,12 @@ export function combineContracts(
   if (Array.isArray(contracts)) {
     collect(contracts);
     const errors = mergeErrorMaps([...contracts.map((c) => c.errors), options?.errors]);
-    return buildContract(basePath, endpoints, errors);
+    return buildContract(basePath, applyContractHeaders(endpoints, options?.headers), errors);
   }
 
   const named = contracts as Record<string, Contract<any, any, any>>;
   const list = Object.values(named);
   collect(list);
   const errors = mergeErrorMaps([...list.map((c) => c.errors), options?.errors]);
-  return buildContract(basePath, endpoints, errors, named);
+  return buildContract(basePath, applyContractHeaders(endpoints, options?.headers), errors, named);
 }

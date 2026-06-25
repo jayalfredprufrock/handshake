@@ -65,7 +65,7 @@ type GetUser = StaticApi<typeof contract.endpoints, "getUser">;
 
 ## `BaseHandlerInput<E>`
 
-The framework-agnostic portion of a handler's input. This is the intersection of `params`, `body`, and `query` types (each conditional on whether the endpoint defines them).
+The framework-agnostic portion of a handler's input. This is the intersection of `params`, `query`, `headers`, and `body` types (each conditional on whether the endpoint defines them).
 
 ```ts
 import type { BaseHandlerInput } from "@jayalfredprufrock/handshake/server";
@@ -105,11 +105,22 @@ type ListUsers = ClientEndpoint<typeof contract.endpoints.listUsers>;
 
 ## `ClientOptions<E>`
 
-The options type for a client method call. Includes optional `query` (typed from the endpoint's query schema) and `request` (passthrough `RequestInit` fields).
+The options type for a client method call: `query` (from the endpoint's query schema), `headers` (from its headers schema), and `request` (passthrough `RequestInit` fields). The `query` and `headers` fields are **required only when their schema has a required property**, and `ClientEndpoint`'s trailing `options` argument is required only when `ClientOptions` has any required field.
 
 ```ts
 import type { ClientOptions } from "@jayalfredprufrock/handshake/client";
 
 type ListOptions = ClientOptions<typeof contract.endpoints.listUsers>;
-// { query?: { limit?: string }; request?: Omit<RequestInit, "method" | "body"> }
+// { query?: { limit?: number }; request?: Omit<RequestInit, "method" | "body"> }
+```
+
+## `DeepPick` / `DeepOmit`
+
+`@jayalfredprufrock/handshake/typebox` exports schema helpers that complement TypeBox's `Pick`/`Omit`. They support unions of objects and a single level of nested keys via dot notation, with strongly-typed key paths (`DeepKeyOf<S>`):
+
+```ts
+import { DeepOmit } from "@jayalfredprufrock/handshake/typebox";
+
+const Public = DeepOmit(User, ["password", "profile.secretToken"]);
+// type-level result is `TDeepOmit<typeof User, ...>`
 ```

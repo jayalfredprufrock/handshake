@@ -3,11 +3,11 @@ title: Contracts
 description: Define your API shape using createContract and TypeBox schemas.
 ---
 
-A contract is the single source of truth for your API. It defines every endpoint — its HTTP method, path, path parameters, query parameters, request body, and response shape. Both the server adapter and the client are derived from this contract.
+A contract is the single source of truth for your API. It defines every endpoint — method, path, params, query, headers, body, and response — plus the errors the API can return. Both the server adapter and the client are derived from it.
 
 ## Creating a Contract
 
-Use `createContract` to define a contract. The first argument is an optional base path that prefixes all endpoint paths. The second argument is a record of endpoint definitions.
+`createContract(basePath?, endpoints, options?)`. The base path prefixes all endpoint paths (defaults to `"/"`).
 
 ```ts
 import { createContract } from "@jayalfredprufrock/handshake/contract";
@@ -23,119 +23,100 @@ const contract = createContract("/api", {
 });
 ```
 
-If you omit the base path, it defaults to `"/"`:
-
-```ts
-const contract = createContract({
-  health: {
-    method: "GET",
-    path: "/health",
-    response: Type.Object({ ok: Type.Boolean() }),
-  },
-});
-```
-
 ## Endpoint Definition
-
-Each endpoint in a contract is defined as an object with the following fields:
 
 ### `method`
 
-**Required.** The HTTP method. Must be one of `"GET"`, `"POST"`, `"PATCH"`, or `"DELETE"`.
-
-```ts
-method: "GET";
-```
+**Required.** `"GET"`, `"POST"`, `"PATCH"`, or `"DELETE"`.
 
 ### `path`
 
-**Required.** The URL path for this endpoint, relative to the contract's base path. Path parameters use the `:param` syntax.
-
-```ts
-path: "/users/:id";
-```
+**Required.** Path relative to the base path. Path parameters use `:param` syntax.
 
 ### `response`
 
-**Required.** A TypeBox schema describing the response body. This is used for both TypeScript type inference and runtime response validation.
+**Required.** A TypeBox schema for the response body — used for both type inference and runtime response validation.
+
+### `responseCode`
+
+**Optional.** The HTTP status for a successful response (defaults to `200`).
 
 ```ts
-response: Type.Object({
-  id: Type.String(),
-  name: Type.String(),
-});
+createUser: { method: "POST", path: "/users", body, response, responseCode: 201 }
 ```
 
 ### `params`
 
-**Optional.** A TypeBox schema describing the path parameters. Should be a `Type.Object()` where each key corresponds to a `:param` segment in the path. On the server, string values from the URL are automatically coerced to match the schema types (e.g. `"42"` becomes `42` for `Type.Number()`).
+**Optional.** Schema for path parameters (a `Type.Object` keyed by `:param` segments). String values from the URL are coerced to match (e.g. `"42"` → `42`).
+
+### `query`
+
+**Optional.** Schema for query-string parameters. Coerced like params; array schemas support repeated keys (`?tags=a&tags=b`).
+
+### `headers`
+
+**Optional.** Schema for request headers. **Header names must be declared in lowercase.** Coerced like params; headers not named in the schema are ignored.
 
 ```ts
-params: Type.Object({ id: Type.Number() });
+headers: Type.Object({ "x-api-key": Type.String() });
 ```
 
 ### `body`
 
-**Optional.** A TypeBox schema describing the JSON request body. Typically used with `POST` and `PATCH` methods. On the server, the body is validated strictly — missing or extra properties produce a 400 error.
+**Optional.** Schema for the JSON request body. Validated strictly on the server — missing or extra properties produce a `VALIDATION_ERROR` (400).
+
+### `description` / `meta`
+
+**Optional.** A human-readable description and an arbitrary metadata object for documentation or custom tooling.
+
+## Errors
+
+Errors are declared once on the contract as a **status-keyed map**. Each error body is discriminated by a `code` literal, and errors are **contract-wide** (any endpoint may return any of them):
 
 ```ts
-body: Type.Object({
-  name: Type.String(),
-  email: Type.String(),
+const contract = createContract(
+  "/api",
+  { transfer: { method: "POST", path: "/transfer", body, response } },
+  {
+    errors: {
+      401: Type.Object({ code: Type.Literal("UNAUTHORIZED") }),
+      404: Type.Object({ code: Type.Literal("NOT_FOUND") }),
+      409: Type.Object({ code: Type.Literal("CONFLICT"), conflictingId: Type.String() }),
+    },
+  },
+);
+```
+
+Codes must be unique across statuses. The codes `VALIDATION_ERROR` and `UNKNOWN_ERROR` are **reserved** by the framework and throw if declared.
+
+The contract exposes two typed helpers:
+
+- **`contract.error("CODE", extra?)`** — builds an `ApiError` with the status inferred from the code; `throw` the result. Undeclared codes and missing/extra fields are compile errors.
+- **`contract.isError(err[, "CODE"])`** — a type guard that narrows a caught error to the contract's error union (or a specific code).
+
+```ts
+throw contract.error("CONFLICT", { conflictingId: dup.id }); // server → 409
+
+if (contract.isError(err, "NOT_FOUND")) {
+  /* err.body: { code: "NOT_FOUND" } */
+}
+```
+
+See [Error handling](/handshake/server/hono/#error-handling) for how the server surfaces them and [the client guide](/handshake/client/fetch/#errors) for catching them.
+
+## Contract-level headers
+
+Pass `headers` at the contract level to require headers across **every** route — it's merged into each route's own `headers` (route headers win on conflict):
+
+```ts
+const contract = createContract(endpoints, {
+  headers: Type.Object({ authorization: Type.String() }),
 });
-```
-
-### `query`
-
-**Optional.** A TypeBox schema describing query string parameters. Like path params, string values are coerced to match schema types. Array schemas support repeated query keys (e.g. `?tags=a&tags=b`).
-
-```ts
-query: Type.Object({
-  page: Type.Number(),
-  limit: Type.Number(),
-  tags: Type.Array(Type.String()),
-});
-```
-
-### `description`
-
-**Optional.** A human-readable description of the endpoint. Useful for documentation generation.
-
-```ts
-description: "Retrieve a user by their ID";
-```
-
-### `meta`
-
-**Optional.** An arbitrary metadata object that can be attached to the endpoint. This can be used to store custom information such as authentication requirements or rate limiting configuration.
-
-```ts
-meta: { auth: "required", rateLimit: 100 }
 ```
 
 ## Splitting Contracts Across Files
 
-For larger APIs, define each resource's contract in its own file and combine them with `combineContracts`:
-
-```ts
-// contracts/users.ts
-import { createContract } from "@jayalfredprufrock/handshake/contract";
-import { Type } from "typebox";
-
-export const usersContract = createContract("/users", {
-  getUser: {
-    method: "GET",
-    path: "/:id",
-    params: Type.Object({ id: Type.String() }),
-    response: Type.Object({ id: Type.String(), name: Type.String() }),
-  },
-  listUsers: {
-    method: "GET",
-    path: "/",
-    response: Type.Array(Type.Object({ id: Type.String(), name: Type.String() })),
-  },
-});
-```
+Define each resource's contract in its own file and combine them with `combineContracts`:
 
 ```ts
 // contracts/index.ts
@@ -143,20 +124,14 @@ import { combineContracts } from "@jayalfredprufrock/handshake/contract";
 import { usersContract } from "./users";
 import { postsContract } from "./posts";
 
-export const contract = combineContracts("/api", [usersContract, postsContract]);
+// array form (no named groups)
+export const contract = combineContracts([usersContract, postsContract], { basePath: "/api" });
+
+// named-object form — keys become group names used by implementContract
+export const named = combineContracts(
+  { users: usersContract, posts: postsContract },
+  { basePath: "/api" },
+);
 ```
 
-`combineContracts(basePath?, contracts[])` merges all endpoints into a single contract under the given top-level base path (defaults to `"/"`). Each endpoint's `path` is prefixed with its source contract's `basePath`, so the final URL resolves to `topBasePath + subBasePath + endpointPath`. If two sub-contracts declare the same endpoint name, `combineContracts` throws.
-
-## The `ContractDef` Type
-
-The `createContract` function returns a `ContractDef<C>` object:
-
-```ts
-interface ContractDef<C extends Record<string, Endpoint>> {
-  basePath: string;
-  endpoints: C;
-}
-```
-
-The full endpoint type information is preserved in the generic parameter `C`, which is what enables type-safe handlers and client methods downstream.
+Each endpoint's `path` is prefixed with its source contract's `basePath`, so the final URL is `topBasePath + subBasePath + endpointPath`. Duplicate endpoint names throw. The options object also accepts contract-wide `errors` and `headers`, which merge across all combined contracts.

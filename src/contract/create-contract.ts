@@ -1,4 +1,5 @@
-import type { Static, TSchema } from "typebox";
+import type { Static, TComposite, TSchema } from "typebox";
+import * as T from "typebox";
 import { ApiError } from "./api-error";
 
 export type InferSchema<S> = S extends TSchema ? Static<S> : any;
@@ -16,6 +17,8 @@ export type Endpoint = {
   params?: TSchema;
   body?: TSchema;
   query?: TSchema;
+  /** Request header schema. Header names must be declared in lowercase. */
+  headers?: TSchema;
   description?: string;
 } & MetaField<EndpointMeta>;
 
@@ -97,8 +100,44 @@ export type ContractWithApi<
   N extends Record<string, Contract<any, any>> | undefined = undefined,
 > = Contract<C, Entry, N> & ContractApi<Entry>;
 
-export interface ContractOptions<E extends ErrorMap | undefined = undefined> {
+export interface ContractOptions<
+  E extends ErrorMap | undefined = undefined,
+  H extends TSchema | undefined = undefined,
+> {
   errors?: E;
+  /** Header schema merged into every route's own `headers` (route headers take precedence). */
+  headers?: H;
+}
+
+/** Merges a contract-level header schema into a route's own header schema. */
+export type MergeHeaders<
+  Base extends TSchema | undefined,
+  Route extends TSchema | undefined,
+> = Base extends TSchema ? (Route extends TSchema ? TComposite<Base, Route> : Base) : Route;
+
+/** Composes contract-level headers into every endpoint's `headers`. */
+export type WithContractHeaders<
+  C extends Record<string, Endpoint>,
+  H extends TSchema | undefined,
+> = H extends TSchema
+  ? {
+      [K in keyof C]: Endpoint &
+        Omit<C[K], "headers"> & { headers: MergeHeaders<H, C[K]["headers"]> };
+    }
+  : C;
+
+/** Composes contract-level headers into each endpoint at build time. */
+export function applyContractHeaders(
+  endpoints: Record<string, Endpoint>,
+  headers: TSchema | undefined,
+): Record<string, Endpoint> {
+  if (!headers) return endpoints;
+  return Object.fromEntries(
+    Object.entries(endpoints).map(([name, endpoint]) => [
+      name,
+      { ...endpoint, headers: endpoint.headers ? T.Composite(headers, endpoint.headers) : headers },
+    ]),
+  );
 }
 
 function schemaMembers(schema: TSchema): TSchema[] {
@@ -159,7 +198,11 @@ export function createContract<const C extends Record<string, Endpoint>>(
 export function createContract<
   const C extends Record<string, Endpoint>,
   E extends ErrorMap | undefined = undefined,
->(endpoints: C, options: ContractOptions<E>): ContractWithApi<C, EntriesOf<E>>;
+  H extends TSchema | undefined = undefined,
+>(
+  endpoints: C,
+  options: ContractOptions<E, H>,
+): ContractWithApi<WithContractHeaders<C, H>, EntriesOf<E>>;
 export function createContract<const C extends Record<string, Endpoint>>(
   basePath: string,
   endpoints: C,
@@ -167,23 +210,30 @@ export function createContract<const C extends Record<string, Endpoint>>(
 export function createContract<
   const C extends Record<string, Endpoint>,
   E extends ErrorMap | undefined = undefined,
->(basePath: string, endpoints: C, options: ContractOptions<E>): ContractWithApi<C, EntriesOf<E>>;
+  H extends TSchema | undefined = undefined,
+>(
+  basePath: string,
+  endpoints: C,
+  options: ContractOptions<E, H>,
+): ContractWithApi<WithContractHeaders<C, H>, EntriesOf<E>>;
 export function createContract(
   basePathOrEndpoints: string | Record<string, Endpoint>,
-  endpointsOrOptions?: Record<string, Endpoint> | ContractOptions<any>,
-  maybeOptions?: ContractOptions<any>,
+  endpointsOrOptions?: Record<string, Endpoint> | ContractOptions<any, any>,
+  maybeOptions?: ContractOptions<any, any>,
 ): any {
   if (typeof basePathOrEndpoints === "string") {
+    const endpoints = endpointsOrOptions as Record<string, Endpoint>;
     return buildContract(
       basePathOrEndpoints,
-      endpointsOrOptions as Record<string, Endpoint>,
+      applyContractHeaders(endpoints, maybeOptions?.headers),
       maybeOptions?.errors,
     );
   }
+  const options = endpointsOrOptions as ContractOptions<any, any> | undefined;
   return buildContract(
     "/",
-    basePathOrEndpoints,
-    (endpointsOrOptions as ContractOptions<any> | undefined)?.errors,
+    applyContractHeaders(basePathOrEndpoints, options?.headers),
+    options?.errors,
   );
 }
 

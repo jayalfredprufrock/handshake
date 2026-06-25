@@ -62,19 +62,18 @@ const contract = createContract("/api", {
 
 ```ts
 // Server — fully typed handlers
-import { createHonoApp } from "@jayalfredprufrock/handshake/hono";
+import { implementContract, createHonoApp } from "@jayalfredprufrock/handshake/hono";
 
-const api = createHonoApp(contract);
-api.implement("getUser", ({ params }) => {
-  // params.id is typed as string
-  return { id: params.id, name: "Alice" };
+const module = implementContract(contract, {
+  getUser: ({ params }) => ({ id: params.id, name: "Alice" }), // params.id is typed as string
 });
+const app = createHonoApp([module]);
 ```
 
 ```ts
-// Client — fully typed methods
+// Client — fully typed methods (fetch defaults to globalThis.fetch)
 import { createFetchClient } from "@jayalfredprufrock/handshake/client";
 
-const api = createFetchClient(contract, { baseUrl: "http://localhost:3000", fetch });
+const api = createFetchClient(contract, { baseUrl: "http://localhost:3000" });
 const user = await api.getUser({ id: "1" }); // { id: string, name: string }
 ```

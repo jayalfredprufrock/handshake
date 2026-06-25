@@ -37,7 +37,7 @@ This generates five endpoints, all relative to the wrapping contract's base path
 | `update` | `PATCH`  | `/:id` | Partial schema (minus params) | Full schema     |
 | `delete` | `DELETE` | `/:id` | —                             | Full schema     |
 
-With `basePath: "/users"` on the wrapping contract, final URLs resolve to `/users`, `/users/:id`, etc.
+With `basePath: "/users"` on the wrapping contract, final URLs resolve to `/users`, `/users/:id`, etc. `create` responds with **`201 Created`**; the others use `200`.
 
 ## Configuration
 
@@ -54,6 +54,8 @@ params: ["id"];
 params: ["tenantId", "id"];
 // Path: /:tenantId/:id
 ```
+
+`hidden`, `readonly`, and `immutable` accept **dot-notation paths** for nested object properties (e.g. `"profile.secretToken"`) and work across unions — all strongly typed against the schema.
 
 ### `hidden`
 

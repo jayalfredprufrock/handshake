@@ -6,6 +6,7 @@ import {
   type HandlerOptions,
   QueryNormalizationError,
   parseBody,
+  parseHeaders,
   parseParams,
   parseQuery,
   parseResponse,
@@ -146,6 +147,17 @@ function buildModule(
             }
             if (error instanceof QueryNormalizationError) {
               return validationError([{ message: error.message }]);
+            }
+            throw error;
+          }
+        }
+
+        if (endpoint.headers) {
+          try {
+            input.headers = parseHeaders(endpoint.headers, c.req.header());
+          } catch (error) {
+            if (error instanceof AssertError) {
+              return validationError(error.cause.errors);
             }
             throw error;
           }

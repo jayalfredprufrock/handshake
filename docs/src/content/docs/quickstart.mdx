@@ -73,46 +73,41 @@ export const contract = createContract("/api", {
 
 ## 2. Create a Server
 
-Use the Hono adapter to bind handlers to the contract. Every endpoint must have a handler registered before calling `build()`.
+Use `implementContract` to bind handlers to the contract, then assemble the app with `createHonoApp`. Every endpoint must have a handler — `implementContract` throws if any is missing.
 
 ```ts
 // server.ts
 import { serve } from "@hono/node-server";
-import { createHonoApp } from "@jayalfredprufrock/handshake/hono";
+import { implementContract, createHonoApp } from "@jayalfredprufrock/handshake/hono";
 import { contract } from "./contract";
 
 const users = new Map<string, { id: string; name: string; email: string }>();
 let nextId = 1;
 
-const api = createHonoApp(contract);
-
-api.implement("getUser", ({ params }) => {
-  const user = users.get(params.id);
-  if (!user) {
-    return new Response(JSON.stringify({ error: "Not found" }), { status: 404 });
-  }
-  return user;
+const module = implementContract(contract, {
+  getUser: ({ params }) => {
+    const user = users.get(params.id);
+    if (!user) throw contract.error("NOT_FOUND"); // requires a NOT_FOUND error in the contract
+    return user;
+  },
+  listUsers: () => [...users.values()],
+  createUser: ({ body }) => {
+    const id = String(nextId++);
+    const user = { id, ...body };
+    users.set(id, user);
+    return user;
+  },
+  deleteUser: ({ params }) => {
+    users.delete(params.id);
+    return { id: params.id };
+  },
 });
 
-api.implement("listUsers", () => [...users.values()]);
-
-api.implement("createUser", ({ body }) => {
-  const id = String(nextId++);
-  const user = { id, ...body };
-  users.set(id, user);
-  return user;
-});
-
-api.implement("deleteUser", ({ params }) => {
-  users.delete(params.id);
-  return { id: params.id };
-});
-
-const app = api.build();
+const app = createHonoApp([module]);
 serve({ fetch: app.fetch, port: 3000 });
 ```
 
-Handler inputs are fully typed — `params`, `body`, and `query` are inferred directly from the contract. Returning a value that doesn't match the response schema produces a TypeScript compile-time error.
+Handler inputs are fully typed — `params`, `query`, `headers`, and `body` are inferred from the contract. Returning a value that doesn't match the response schema is a compile-time error.
 
 ## 3. Create a Client
 
@@ -123,17 +118,7 @@ The client is generated directly from the contract. Each endpoint becomes a type
 import { createFetchClient } from "@jayalfredprufrock/handshake/client";
 import { contract } from "./contract";
 
-const api = createFetchClient(contract, {
-  baseUrl: "http://localhost:3000",
-  async fetch(url, init) {
-    const res = await fetch(url, {
-      ...init,
-      headers: { "content-type": "application/json" },
-      body: init?.body ? JSON.stringify(init.body) : undefined,
-    });
-    return res.json();
-  },
-});
+const api = createFetchClient(contract, { baseUrl: "http://localhost:3000" });
 
 const users = await api.listUsers();
 const created = await api.createUser({ name: "Alice", email: "alice@example.com" });
@@ -141,7 +126,7 @@ const user = await api.getUser({ id: created.id });
 await api.deleteUser({ id: created.id });
 ```
 
-Method signatures adapt to the endpoint definition — endpoints with path params take a params object as the first argument, endpoints with a body take it next, and options are always last.
+`fetch` defaults to `globalThis.fetch`. Method signatures adapt to the endpoint — params first, body next, and an `options` object (`query`, `headers`, `request`) last.
 
 ## Next Steps
 

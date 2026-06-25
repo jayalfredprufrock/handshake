@@ -5,7 +5,8 @@ export type BaseHandlerInput<E extends Endpoint> = (E["params"] extends TSchema
   ? { params: Static<E["params"]> }
   : {}) &
   (E["body"] extends TSchema ? { body: Static<E["body"]> } : {}) &
-  (E["query"] extends TSchema ? { query: Static<E["query"]> } : {});
+  (E["query"] extends TSchema ? { query: Static<E["query"]> } : {}) &
+  (E["headers"] extends TSchema ? { headers: Static<E["headers"]> } : {});
 
 export type BaseHandler<E extends Endpoint> = (
   input: BaseHandlerInput<E>,

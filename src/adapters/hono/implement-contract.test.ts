@@ -345,6 +345,59 @@ describe("error handling", () => {
     expect(listed.status).toBe(200);
   });
 
+  test("validates request headers and passes them to the handler", async () => {
+    const contract = createContract({
+      secret: {
+        method: "GET",
+        path: "/secret",
+        headers: T.Object({ "x-api-key": T.String() }),
+        response: T.Object({ key: T.String() }),
+      },
+    });
+    const module = implementContract(contract, {
+      secret: ({ headers }) => ({ key: headers["x-api-key"] }),
+    });
+    const app = createHonoApp([module]);
+
+    const ok = await app.request("/secret", { headers: { "x-api-key": "abc" } });
+    expect(ok.status).toBe(200);
+    expect(await ok.json()).toEqual({ key: "abc" });
+
+    const missing = await app.request("/secret");
+    expect(missing.status).toBe(400);
+    expect(((await missing.json()) as { code: string }).code).toBe("VALIDATION_ERROR");
+  });
+
+  test("merges contract-level headers into every route", async () => {
+    const contract = createContract(
+      {
+        a: { method: "GET", path: "/a", response: T.Object({ ok: T.Boolean() }) },
+        b: {
+          method: "GET",
+          path: "/b",
+          headers: T.Object({ "x-extra": T.String() }),
+          response: T.Object({ ok: T.Boolean() }),
+        },
+      },
+      { headers: T.Object({ "x-tenant": T.String() }) },
+    );
+    const module = implementContract(contract, {
+      a: ({ headers }) => ({ ok: Boolean(headers["x-tenant"]) }),
+      b: ({ headers }) => ({ ok: Boolean(headers["x-tenant"] && headers["x-extra"]) }),
+    });
+    const app = createHonoApp([module]);
+
+    // route `a` inherits the contract-level header
+    expect((await app.request("/a", { headers: { "x-tenant": "t1" } })).status).toBe(200);
+    expect((await app.request("/a")).status).toBe(400);
+
+    // route `b` requires the merge of contract-level + its own header
+    const bOk = await app.request("/b", { headers: { "x-tenant": "t1", "x-extra": "e1" } });
+    expect(bOk.status).toBe(200);
+    expect(await bOk.json()).toEqual({ ok: true });
+    expect((await app.request("/b", { headers: { "x-tenant": "t1" } })).status).toBe(400);
+  });
+
   test("throws at implementContract time when a handler is missing", () => {
     const contract = createContract({
       getUser: {

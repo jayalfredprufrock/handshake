@@ -3,7 +3,7 @@ title: Hono
 description: Server adapter for Hono — bind contracts to typed, validated handlers.
 ---
 
-The Hono adapter creates a fully-typed Hono application from a contract. It handles request parsing, validation, and response serialization automatically.
+The Hono adapter binds a contract to typed handlers and assembles a Hono app. It parses and validates requests, serializes responses, and gives you a uniform error envelope.
 
 ## Installation
 
@@ -13,185 +13,136 @@ npm install @jayalfredprufrock/handshake hono typebox
 
 ## Basic Usage
 
+`implementContract` binds handlers to a contract and returns a `RouteModule`; `createHonoApp` assembles one or more modules into a `Hono` instance.
+
 ```ts
-import { createHonoApp } from "@jayalfredprufrock/handshake/hono";
+import { serve } from "@hono/node-server";
+import { implementContract, createHonoApp } from "@jayalfredprufrock/handshake/hono";
 import { contract } from "./contract";
 
-const api = createHonoApp(contract);
-
-api.implement("getUser", ({ params }) => {
-  return { id: params.id, name: "Alice" };
+const module = implementContract(contract, {
+  getUser: ({ params }) => {
+    const user = users.get(params.id);
+    if (!user) throw contract.error("NOT_FOUND");
+    return user;
+  },
+  listUsers: () => [...users.values()],
 });
 
-api.implement("listUsers", () => []);
-
-const app = api.build();
+const app = createHonoApp([module]);
+serve({ fetch: app.fetch, port: 3000 });
 ```
 
-## `createHonoApp(contract, options?)`
+`implementContract` throws immediately if any endpoint is missing a handler.
 
-## `createHonoApp(app, contract, options?)`
+## `implementContract(contract, handlers | closure, options?)`
 
-Creates a `HandshakeApp` that wraps a Hono application. When an existing `Hono` instance is passed as the first argument, its `Env` (Bindings/Variables) is threaded through to handlers so `c.env` and `c.var` are fully typed.
+Pass a handler map, or a closure for per-group middleware:
+
+```ts
+const module = implementContract(contract, (group) => {
+  group.use(bearerAuth({ token: process.env.API_TOKEN! }));
+  group.implement("getUser", ({ params }) => ({ id: params.id, name: "Alice" }), {
+    validateResponse: false, // per-handler override
+  });
+});
+```
+
+For a [combined contract](/handshake/core/contracts/#splitting-contracts-across-files) built with the named-object form, pass the group name first:
+
+```ts
+const usersModule = implementContract(contract, "users", {
+  getUser: ({ params }) => ({ id: params.id, name: "Alice" }),
+});
+```
 
 ### Options
 
 ```ts
-interface CreateHonoAppOptions {
-  basePath?: string;
-  validateResponse?: boolean;
+interface ImplementContractOptions {
+  validateResponse?: boolean; // default true; governs both success and error response validation
+  middleware?: EndpointMiddlewareFactory;
 }
 ```
 
-#### Passing an existing Hono app
+### Handler input
 
-Pass a Hono instance as the first argument to register routes on it. Use this when you need to add middleware or custom routes alongside the contract routes. The app's `Env` generic flows through to `c` in every handler.
+The input object contains only the fields the endpoint defines, plus `c`:
+
+| Field     | Present when               | Type                   |
+| --------- | -------------------------- | ---------------------- |
+| `params`  | endpoint defines `params`  | `Static<E["params"]>`  |
+| `query`   | endpoint defines `query`   | `Static<E["query"]>`   |
+| `headers` | endpoint defines `headers` | `Static<E["headers"]>` |
+| `body`    | endpoint defines `body`    | `Static<E["body"]>`    |
+| `c`       | always                     | Hono `Context`         |
+
+```ts
+getUser: ({ params, headers, c }) => {
+  const reqId = c.req.header("x-request-id");
+  return { id: params.id, apiKey: headers["x-api-key"] };
+},
+```
+
+### Return values
+
+- **A plain value** matching the response schema — serialized as JSON (status from `responseCode`, default `200`).
+- **A `Response`** — passed through as-is, bypassing response validation.
+
+### Validation
+
+- **Params, query, headers** are coerced to the schema; failures produce `VALIDATION_ERROR` (400).
+- **Body** is validated strictly (no missing/extra properties).
+- **Responses** are validated when `validateResponse` is on (the default) — unknown properties are stripped, and a mismatch is a server bug (see below).
+
+## Error handling
+
+Every error the server emits is an `ApiError` with a `{ code }` body. Throw a declared error with `contract.error("CODE")` (or `new ApiError(status, body)`); it's validated against the contract's error map for that status before being sent.
+
+Two codes are **reserved** and emitted by the framework:
+
+- **`VALIDATION_ERROR`** (400) — a request failed validation; body includes `issues`.
+- **`UNKNOWN_ERROR`** (500) — an unexpected error, or a handler response that failed validation. The cause is never sent to the client; it's logged on the server.
+
+### `createHonoApp(modules, options?)`
+
+```ts
+interface CreateHonoAppOptions {
+  onError?: (err: unknown, c: Context) => ApiError | void | Promise<ApiError | void>;
+  middleware?: EndpointMiddlewareFactory | EndpointMiddlewareFactory[];
+}
+```
+
+`onError` maps unexpected (non-`ApiError`) errors to a typed `ApiError`. Return an `ApiError` to shape the response; return nothing to fall through to `UNKNOWN_ERROR`. The server can **never** emit a non-`ApiError` body, regardless of what `onError` does (a throwing or malformed `onError` still yields a safe `UNKNOWN_ERROR`).
+
+```ts
+import { ApiError } from "@jayalfredprufrock/handshake/contract";
+import { ResponseValidationError } from "@jayalfredprufrock/handshake/server";
+
+const app = createHonoApp([module], {
+  onError: (err) => {
+    if (err instanceof ResponseValidationError) log.alert("contract drift", err.issues);
+    if (err instanceof DatabaseError) metrics.inc("db_error");
+    // return nothing → client gets { code: "UNKNOWN_ERROR" } (logged)
+  },
+});
+```
+
+Any error you throw that isn't a declared `ApiError` reaches `onError` fully intact (custom fields, stack) while the client only ever sees the generic `UNKNOWN_ERROR` — so you can carry internal context on your own error classes and inspect it there. `ResponseValidationError` (from `/server`) is the framework's own example: it carries the validation `issues` for logging while the client sees `UNKNOWN_ERROR`.
+
+## Global middleware
+
+`createHonoApp` returns a plain `Hono` instance. For app-level middleware (logging, CORS), mount it on your own root Hono:
 
 ```ts
 import { Hono } from "hono";
 import { logger } from "hono/logger";
 
-type Env = { Variables: { user: { id: string } } };
-
-const hono = new Hono<Env>();
-hono.use("*", logger());
-hono.get("/health", (c) => c.json({ ok: true }));
-
-const api = createHonoApp(hono, contract);
-
-api.implement("getUser", ({ c, params }) => {
-  const user = c.var.user;
-  return { id: params.id, name: user.id };
-});
+const root = new Hono();
+root.use("*", logger());
+root.route("/", createHonoApp([usersModule, postsModule]));
 ```
 
-#### `basePath`
+## Route ordering
 
-Override the contract's base path. Useful when the same contract is served at a different prefix (e.g. versioned APIs).
-
-```ts
-const api = createHonoApp(contract, { basePath: "/v2" });
-```
-
-#### `validateResponse`
-
-Enable or disable [response validation](/handshake/core/validation/#response-validation) globally. Defaults to `true`. Can be overridden per-handler.
-
-```ts
-const api = createHonoApp(contract, { validateResponse: false });
-```
-
-## `implement(name, handler, options?)`
-
-Register a handler for an endpoint. The handler receives a typed input object and must return the response type defined in the contract (or a raw `Response`).
-
-```ts
-api.implement("getUser", ({ params }) => {
-  return { id: params.id, name: "Alice" };
-});
-```
-
-### Handler Input
-
-The input object contains only the fields relevant to the endpoint:
-
-| Field    | Present when              | Type                  |
-| -------- | ------------------------- | --------------------- |
-| `params` | Endpoint defines `params` | `Static<E["params"]>` |
-| `body`   | Endpoint defines `body`   | `Static<E["body"]>`   |
-| `query`  | Endpoint defines `query`  | `Static<E["query"]>`  |
-| `c`      | Always                    | Hono `Context`        |
-
-The Hono `Context` object (`c`) is always available, giving you access to the full Hono API for cases that need it:
-
-```ts
-api.implement("getUser", ({ params, c }) => {
-  const authHeader = c.req.header("authorization");
-  // ...
-  return { id: params.id, name: "Alice" };
-});
-```
-
-### Return Values
-
-Handlers can return either:
-
-- **A plain value** matching the response schema — automatically serialized as JSON with `Content-Type: application/json`
-- **A `Response` object** — passed through as-is, bypassing response validation
-
-```ts
-api.implement("getUser", ({ params }) => {
-  const user = users.get(params.id);
-  if (!user) {
-    // Raw Response — full control over status, headers, body
-    return new Response(JSON.stringify({ error: "Not found" }), {
-      status: 404,
-      headers: { "content-type": "application/json" },
-    });
-  }
-  // Plain object — automatically wrapped as JSON
-  return user;
-});
-```
-
-### Handler Options
-
-```ts
-interface HandlerOptions {
-  validateResponse?: boolean;
-}
-```
-
-Per-handler response validation override. Takes precedence over the global setting:
-
-```ts
-// Global validation is on, but skip it for this expensive endpoint
-api.implement("listUsers", () => [...users.values()], {
-  validateResponse: false,
-});
-```
-
-## `build()`
-
-Finalizes the application by registering all routes on the Hono instance and returns it.
-
-```ts
-const app = api.build();
-```
-
-`build()` throws if any endpoint in the contract does not have a registered handler:
-
-```
-Error: Missing handlers for endpoints: listUsers, deleteUser
-```
-
-This ensures the server always implements the full contract.
-
-### Running the App
-
-The returned `Hono` instance can be used with any Hono-compatible server:
-
-```ts
-import { serve } from "@hono/node-server";
-
-const app = api.build();
-serve({ fetch: app.fetch, port: 3000 });
-```
-
-## Type Safety
-
-The adapter enforces type safety at compile time:
-
-- Handler inputs are typed based on the endpoint definition — `params`, `body`, and `query` have the correct shapes
-- Handler return values must match the endpoint's `response` schema
-- The `name` argument to `implement()` only accepts valid endpoint names from the contract
-
-Returning an incorrect response type produces a TypeScript error:
-
-```ts
-api.implement("getUser", ({ params }) => {
-  return { id: 123, name: "Alice" };
-  //       ~~~~~~
-  // Type 'number' is not assignable to type 'string'
-});
-```
+Routes are sorted by path specificity before registration — literal segments take precedence over `:param` segments at the same position, so `/users/me` resolves to the literal handler regardless of definition order.

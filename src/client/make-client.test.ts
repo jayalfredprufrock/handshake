@@ -148,6 +148,31 @@ describe("createFetchClient request/response pipeline", () => {
     });
     expect(client.$contract).toBe(getUserContract);
   });
+
+  test("sends declared headers (and requires them when the schema does)", async () => {
+    let request: Request | undefined;
+    const fetch = vi.fn(async (req: Request | string | URL) => {
+      request = req as Request;
+      return json(200, { ok: true });
+    });
+    const contract = createContract({
+      secret: {
+        method: "GET",
+        path: "/secret",
+        headers: T.Object({ "x-api-key": T.String() }),
+        response: T.Object({ ok: T.Boolean() }),
+      },
+    });
+    const client = createFetchClient(contract, { fetch, baseUrl: "https://x.com" });
+
+    await client.secret({ headers: { "x-api-key": "abc" } });
+    expect(request!.headers.get("x-api-key")).toBe("abc");
+
+    void (() => {
+      // @ts-expect-error a required header means options must be provided
+      void client.secret();
+    });
+  });
 });
 
 describe("createFetchClient hooks", () => {
@@ -220,5 +245,32 @@ describe("client typing", () => {
       baseUrl: "https://x.com",
     });
     expectTypeOf(client.getUser).returns.resolves.toEqualTypeOf<{ id: string }>();
+  });
+
+  test("options are required only when the query schema has a required property", () => {
+    const contract = createContract({
+      search: { method: "GET", path: "/s", query: T.Object({ q: T.String() }), response: T.Null() },
+      list: {
+        method: "GET",
+        path: "/l",
+        query: T.Object({ limit: T.Optional(T.Number()) }),
+        response: T.Null(),
+      },
+      plain: { method: "GET", path: "/p", response: T.Null() },
+    });
+    const client = createFetchClient(contract, { fetch: okFetch(null), baseUrl: "https://x.com" });
+
+    // type-only assertions; never executed
+    void (() => {
+      // @ts-expect-error a required query property means options must be provided
+      void client.search();
+      // @ts-expect-error query is required here
+      void client.search({});
+      void client.search({ query: { q: "hi" } });
+
+      void client.list(); // query is all-optional → options optional
+      void client.list({ query: { limit: 1 } });
+      void client.plain(); // no query → options optional
+    });
   });
 });

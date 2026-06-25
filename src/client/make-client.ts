@@ -4,28 +4,41 @@ import { ApiError } from "../contract";
 
 type ClientRequestInit = Omit<RequestInit, "method" | "body">;
 
-export type ClientOptions<E extends Endpoint> = {
-  query?: InferSchema<E["query"]>;
-  request?: ClientRequestInit;
-};
+type Simplify<T> = { [K in keyof T]: T[K] } & {};
+
+/** A `{ key: value }` field that's required only when its schema has a required property. */
+type SchemaField<Key extends string, S> = S extends TSchema
+  ? {} extends InferSchema<S>
+    ? { [K in Key]?: InferSchema<S> }
+    : { [K in Key]: InferSchema<S> }
+  : {};
+
+export type ClientOptions<E extends Endpoint> = Simplify<
+  SchemaField<"query", E["query"]> &
+    SchemaField<"headers", E["headers"]> & { request?: ClientRequestInit }
+>;
+
+/** The trailing `options` arg, required only when `ClientOptions` has a required field. */
+type OptionsArgs<E extends Endpoint> =
+  {} extends ClientOptions<E> ? [options?: ClientOptions<E>] : [options: ClientOptions<E>];
 
 export type ClientEndpoint<E extends Endpoint> = E["params"] extends TSchema
   ? E["body"] extends TSchema
     ? (
         params: InferSchema<E["params"]>,
         body: InferSchema<E["body"]>,
-        options?: ClientOptions<E>,
+        ...options: OptionsArgs<E>
       ) => Promise<InferSchema<E["response"]>>
     : (
         params: InferSchema<E["params"]>,
-        options?: ClientOptions<E>,
+        ...options: OptionsArgs<E>
       ) => Promise<InferSchema<E["response"]>>
   : E["body"] extends TSchema
     ? (
         body: InferSchema<E["body"]>,
-        options?: ClientOptions<E>,
+        ...options: OptionsArgs<E>
       ) => Promise<InferSchema<E["response"]>>
-    : (options?: ClientOptions<E>) => Promise<InferSchema<E["response"]>>;
+    : (...options: OptionsArgs<E>) => Promise<InferSchema<E["response"]>>;
 
 /** The full request context handed to `handleResponse` and `retry`. */
 export interface ResponseContext {
@@ -127,6 +140,7 @@ interface RequestSpec {
   method: string;
   body: unknown;
   init: ClientRequestInit | undefined;
+  headers: Record<string, string | number | boolean | undefined> | undefined;
 }
 
 async function runRequest(
@@ -135,7 +149,13 @@ async function runRequest(
   spec: RequestSpec,
   attempt = 1,
 ): Promise<unknown> {
-  const headers = new Headers(spec.init?.headers);
+  // Declared headers first; then options.request.headers (and later handleRequest) win.
+  const headers = new Headers();
+  for (const [key, value] of Object.entries(spec.headers ?? {})) {
+    if (value !== undefined && value !== null) headers.set(key, String(value));
+  }
+  if (spec.init?.headers) new Headers(spec.init.headers).forEach((v, k) => headers.set(k, v));
+
   const init: RequestInit = { ...spec.init, method: spec.method, headers };
   if (spec.body !== undefined) {
     init.body = JSON.stringify(spec.body);
@@ -204,6 +224,7 @@ export const createFetchClient = <Ct extends Contract<any, any, any>>(
         method: endpoint.method,
         body,
         init: options?.request,
+        headers: options?.headers,
       });
     };
     Object.assign(func, endpoint);
