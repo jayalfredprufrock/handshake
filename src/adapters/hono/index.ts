@@ -1,11 +1,10 @@
-import type { Contract, Endpoint, InferSchema } from "../../contract";
-import { ApiError, computeEffectiveErrors, joinPath } from "../../contract";
+import type { Contract, Endpoint, ErrorMap, InferSchema } from "../../contract";
+import { ApiError, joinPath } from "../../contract";
 import {
   AssertError,
   type BaseHandlerInput,
   type HandlerOptions,
   QueryNormalizationError,
-  checkValue,
   parseBody,
   parseParams,
   parseQuery,
@@ -13,7 +12,6 @@ import {
 } from "../../server";
 import { Hono } from "hono";
 import type { Context, Env, MiddlewareHandler } from "hono";
-import type { TSchema } from "typebox";
 
 type HandlerInput<E extends Endpoint, HonoEnv extends Env> = BaseHandlerInput<E> & {
   c: Context<HonoEnv>;
@@ -46,7 +44,13 @@ export interface ImplementContractOptions<HonoEnv extends Env = Env> {
 }
 
 export interface CreateHonoAppOptions<HonoEnv extends Env = Env> {
-  errorHandler?: (err: unknown) => ApiError;
+  /**
+   * Maps an unexpected (non-`ApiError`) error to a typed `ApiError`. Return an `ApiError`
+   * to control the response, or nothing to fall through to the built-in 500 `UNKNOWN_ERROR`.
+   * Returning an `ApiError` is the only way to shape the response — the server can never emit
+   * a non-`ApiError` body, regardless of whether this is provided or how it behaves.
+   */
+  onError?: (err: unknown, c: Context<HonoEnv>) => ApiError | void | Promise<ApiError | void>;
   middleware?: EndpointMiddlewareFactory<HonoEnv> | EndpointMiddlewareFactory<HonoEnv>[];
 }
 
@@ -90,7 +94,7 @@ function buildModule(
   endpoints: Record<string, Endpoint>,
   handlers: Record<string, any>,
   perHandlerOptions: Record<string, HandlerOptions | undefined>,
-  globalErrors: TSchema | undefined,
+  errors: ErrorMap | undefined,
   mountPath: string,
   moduleOptions: ImplementContractOptions,
   groupMiddlewares: MiddlewareHandler[],
@@ -118,12 +122,16 @@ function buildModule(
       hono.on(endpoint.method, [endpoint.path], ...allMw, async (c: Context) => {
         const input: Record<string, unknown> = { c };
 
+        // All framework errors share the contract's `{ code }` envelope.
+        const validationError = (issues: unknown) =>
+          c.json({ code: "VALIDATION_ERROR", issues }, 400);
+
         if (endpoint.params) {
           try {
             input.params = parseParams(endpoint.params, c.req.param());
           } catch (error) {
             if (error instanceof AssertError) {
-              return c.json({ error: "Invalid path parameters", details: error.cause.errors }, 400);
+              return validationError(error.cause.errors);
             }
             throw error;
           }
@@ -134,13 +142,10 @@ function buildModule(
             input.query = parseQuery(endpoint.query, c.req.queries() as Record<string, string[]>);
           } catch (error) {
             if (error instanceof AssertError) {
-              return c.json(
-                { error: "Invalid query parameters", details: error.cause.errors },
-                400,
-              );
+              return validationError(error.cause.errors);
             }
             if (error instanceof QueryNormalizationError) {
-              return c.json({ error: error.message }, 400);
+              return validationError([{ message: error.message }]);
             }
             throw error;
           }
@@ -151,20 +156,30 @@ function buildModule(
             input.body = parseBody(endpoint.body, await c.req.json());
           } catch (error) {
             if (error instanceof AssertError) {
-              return c.json({ error: "Invalid request body", details: error.cause.errors }, 400);
+              return validationError(error.cause.errors);
             }
             throw error;
           }
         }
 
+        const shouldValidate =
+          handlerOptions?.validateResponse ?? moduleOptions.validateResponse ?? true;
+
         let result: unknown;
         try {
           result = await handler(input as any);
         } catch (err) {
-          const effectiveErrors = computeEffectiveErrors(globalErrors, endpoint.errors);
-          if (err instanceof ApiError) {
-            if (!effectiveErrors || checkValue(effectiveErrors, err.body)) {
-              return c.json(err.body, err.statusCode as any);
+          if (!(err instanceof ApiError)) throw err;
+          if (!shouldValidate) {
+            return c.json(err.body as any, err.statusCode as any);
+          }
+          const schema = errors?.[err.statusCode];
+          if (schema) {
+            try {
+              return c.json(parseResponse(schema, err.body) as any, err.statusCode as any);
+            } catch (validationError) {
+              if (validationError instanceof AssertError) throw err;
+              throw validationError;
             }
           }
           throw err;
@@ -174,24 +189,15 @@ function buildModule(
           return result;
         }
 
-        const shouldValidate =
-          handlerOptions?.validateResponse ?? moduleOptions.validateResponse ?? true;
+        const successCode = endpoint.responseCode ?? 200;
 
         if (shouldValidate && endpoint.response) {
-          try {
-            return c.json(parseResponse(endpoint.response, result));
-          } catch (error) {
-            if (error instanceof AssertError) {
-              return c.json(
-                { error: "Response validation failed", details: error.cause.errors },
-                500,
-              );
-            }
-            throw error;
-          }
+          // parseResponse throws ResponseValidationError on a mismatch; it bubbles to onError,
+          // which surfaces it to the client as UNKNOWN_ERROR (without leaking why).
+          return c.json(parseResponse(endpoint.response, result) as any, successCode as any);
         }
 
-        return c.json(result);
+        return c.json(result as any, successCode as any);
       });
     }
 
@@ -209,12 +215,11 @@ function buildModule(
 // Named group, object handlers or closure
 export function implementContract<
   C extends Record<string, Endpoint>,
-  G extends TSchema | undefined,
   N extends Record<string, Contract<any, any>>,
   K extends keyof N & string,
   HonoEnv extends Env = Env,
 >(
-  contract: Contract<C, G, N>,
+  contract: Contract<C, any, N>,
   groupName: K,
   handlersOrClosure:
     | HandlerMap<N[K]["endpoints"], HonoEnv>
@@ -223,12 +228,8 @@ export function implementContract<
 ): RouteModule;
 
 // Unnamed, object handlers or closure
-export function implementContract<
-  C extends Record<string, Endpoint>,
-  G extends TSchema | undefined,
-  HonoEnv extends Env = Env,
->(
-  contract: Contract<C, G, any>,
+export function implementContract<C extends Record<string, Endpoint>, HonoEnv extends Env = Env>(
+  contract: Contract<C, any, any>,
   handlersOrClosure: HandlerMap<C, HonoEnv> | ((group: GroupBuilder<C, HonoEnv>) => void),
   options?: ImplementContractOptions<HonoEnv>,
 ): RouteModule;
@@ -284,7 +285,7 @@ export function implementContract(
     endpoints,
     handlers,
     perHandlerOptions,
-    contract.globalErrors,
+    contract.errors,
     mountPath,
     options,
     groupMiddlewares,
@@ -294,16 +295,25 @@ export function implementContract(
 export function createHonoApp<HonoEnv extends Env = Env>(
   modules: RouteModule[],
   options?: CreateHonoAppOptions<HonoEnv>,
-): Hono {
-  const root = new Hono();
+): Hono<HonoEnv> {
+  const root = new Hono<HonoEnv>();
 
-  const errorHandler = options?.errorHandler;
-  root.onError((err, c) => {
-    if (errorHandler) {
-      const apiErr = errorHandler(err);
-      return c.json(apiErr.body, apiErr.statusCode as any);
+  const onError = options?.onError;
+  root.onError(async (err, c) => {
+    if (onError) {
+      try {
+        const mapped = await onError(err, c);
+        // Only an ApiError can shape the response; anything else falls through.
+        if (mapped instanceof ApiError) {
+          return c.json(mapped.body as any, mapped.statusCode as any);
+        }
+      } catch (hookError) {
+        console.error(hookError);
+      }
     }
-    return c.json({ error: "Internal Server Error" }, 500);
+    // Unhandled error — log (matching Hono's default) and emit the contract envelope.
+    console.error(err);
+    return c.json({ code: "UNKNOWN_ERROR" }, 500);
   });
 
   const middlewareFactories = options?.middleware

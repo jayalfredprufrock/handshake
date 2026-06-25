@@ -1,8 +1,13 @@
 import { describe, expect, expectTypeOf, test } from "vite-plus/test";
 import * as T from "typebox";
-import type { Static } from "typebox";
+import { ApiError } from "./api-error";
 import { createContract } from "./create-contract";
-import type { ContractErrors } from "./create-contract";
+
+const errors = {
+  401: T.Object({ code: T.Literal("UNAUTHORIZED") }),
+  404: T.Object({ code: T.Literal("NOT_FOUND") }),
+  409: T.Object({ code: T.Literal("CONFLICT"), conflictingId: T.String() }),
+};
 
 describe("createContract", () => {
   test("creates contract with default basePath", () => {
@@ -22,11 +27,7 @@ describe("createContract", () => {
 
   test("creates contract with basePath arg", () => {
     const contract = createContract("/api/v1", {
-      listUsers: {
-        method: "GET",
-        path: "/users",
-        response: T.Array(T.Object({ id: T.String() })),
-      },
+      listUsers: { method: "GET", path: "/users", response: T.Array(T.Object({ id: T.String() })) },
     });
 
     expect(contract.basePath).toBe("/api/v1");
@@ -51,95 +52,100 @@ describe("createContract", () => {
     expect(endpoint.body).toBeDefined();
   });
 
-  test("stores globalErrors option", () => {
-    const GlobalErrors = T.Union([
-      T.Object({ code: T.Literal("NOT_FOUND") }),
-      T.Object({ code: T.Literal("UNAUTHORIZED") }),
-    ]);
-
+  test("stores the errors map", () => {
     const contract = createContract(
-      {
-        getUser: {
-          method: "GET",
-          path: "/users/:id",
-          params: T.Object({ id: T.String() }),
-          response: T.Object({ id: T.String() }),
-        },
-      },
-      { globalErrors: GlobalErrors },
+      { ping: { method: "GET", path: "/", response: T.Null() } },
+      { errors },
     );
-
-    expect(contract.globalErrors).toBe(GlobalErrors);
+    expect(contract.errors).toBe(errors);
   });
 
-  test("stores per-route errors", () => {
-    const RouteErrors = T.Object({ code: T.Literal("CONFLICT") });
-
-    const contract = createContract({
-      createUser: {
-        method: "POST",
-        path: "/users",
-        body: T.Object({ name: T.String() }),
-        response: T.Object({ id: T.String() }),
-        errors: RouteErrors,
-      },
-    });
-
-    expect(contract.endpoints.createUser.errors).toBe(RouteErrors);
+  test("throws when a reserved framework code is declared", () => {
+    expect(() =>
+      createContract(
+        { ping: { method: "GET", path: "/", response: T.Null() } },
+        { errors: { 400: T.Object({ code: T.Literal("VALIDATION_ERROR") }) } },
+      ),
+    ).toThrow(/reserved/);
+    expect(() =>
+      createContract(
+        { ping: { method: "GET", path: "/", response: T.Null() } },
+        { errors: { 500: T.Object({ code: T.Literal("UNKNOWN_ERROR") }) } },
+      ),
+    ).toThrow(/reserved/);
   });
 
-  describe("type inference", () => {
-    test("ContractErrors resolves to effective errors per endpoint", () => {
-      const GlobalErrors = T.Union([
-        T.Object({ code: T.Literal("NOT_FOUND") }),
-        T.Object({ code: T.Literal("UNAUTHORIZED") }),
-      ]);
-      const RouteErrors = T.Object({ code: T.Literal("CONFLICT") });
-
-      const contract = createContract(
+  test("throws when error codes collide across statuses", () => {
+    expect(() =>
+      createContract(
+        { ping: { method: "GET", path: "/", response: T.Null() } },
         {
-          createUser: {
-            method: "POST",
-            path: "/users",
-            body: T.Object({ name: T.String() }),
-            response: T.Object({ id: T.String() }),
-            errors: RouteErrors,
-          },
-          getUser: {
-            method: "GET",
-            path: "/users/:id",
-            params: T.Object({ id: T.String() }),
-            response: T.Object({ id: T.String() }),
+          errors: {
+            400: T.Object({ code: T.Literal("BAD") }),
+            422: T.Object({ code: T.Literal("BAD") }),
           },
         },
-        { globalErrors: GlobalErrors },
-      );
+      ),
+    ).toThrow(/Duplicate error code "BAD"/);
+  });
+});
 
-      type Errors = ContractErrors<typeof contract>;
+describe("contract.error", () => {
+  const contract = createContract(
+    { create: { method: "POST", path: "/", response: T.Null() } },
+    { errors },
+  );
 
-      // createUser gets union of global + route errors
-      expectTypeOf<Static<Errors["createUser"]>>().toEqualTypeOf<
-        { code: "NOT_FOUND" } | { code: "UNAUTHORIZED" } | { code: "CONFLICT" }
-      >();
+  test("infers the status from the code", () => {
+    const err = contract.error("NOT_FOUND");
+    expect(err).toBeInstanceOf(ApiError);
+    expect(err.statusCode).toBe(404);
+    expect(err.body).toEqual({ code: "NOT_FOUND" });
+  });
 
-      // getUser gets only global errors (no route-specific errors)
-      expectTypeOf<Static<NonNullable<Errors["getUser"]>>>().toEqualTypeOf<
-        { code: "NOT_FOUND" } | { code: "UNAUTHORIZED" }
-      >();
+  test("includes typed extra fields", () => {
+    const err = contract.error("CONFLICT", { conflictingId: "7" });
+    expect(err.statusCode).toBe(409);
+    expect(err.body).toEqual({ code: "CONFLICT", conflictingId: "7" });
+  });
+
+  test("rejects undeclared codes and bad fields at compile time", () => {
+    // type-only assertions; never executed
+    void (() => {
+      // @ts-expect-error "NOPE" is not a declared error code
+      contract.error("NOPE");
+      // @ts-expect-error CONFLICT requires conflictingId
+      contract.error("CONFLICT");
     });
+  });
+});
 
-    test("ContractErrors is undefined when no errors declared", () => {
-      const contract = createContract({
-        getUser: {
-          method: "GET",
-          path: "/users/:id",
-          params: T.Object({ id: T.String() }),
-          response: T.Object({ id: T.String() }),
-        },
-      });
+describe("contract.isError", () => {
+  const contract = createContract(
+    { create: { method: "POST", path: "/", response: T.Null() } },
+    { errors },
+  );
 
-      type Errors = ContractErrors<typeof contract>;
-      expectTypeOf<Errors["getUser"]>().toEqualTypeOf<undefined>();
-    });
+  test("recognizes ApiError and narrows by code", () => {
+    const err: unknown = contract.error("CONFLICT", { conflictingId: "7" });
+    expect(contract.isError(err)).toBe(true);
+    expect(contract.isError(new Error("x"))).toBe(false);
+    expect(contract.isError(err, "CONFLICT")).toBe(true);
+    expect(contract.isError(err, "NOT_FOUND")).toBe(false);
+
+    if (contract.isError(err, "CONFLICT")) {
+      expectTypeOf(err.body).toEqualTypeOf<{ code: "CONFLICT"; conflictingId: string }>();
+    }
+  });
+
+  test("bare guard narrows the body to the contract error union", () => {
+    const err: unknown = contract.error("NOT_FOUND");
+    if (contract.isError(err)) {
+      expectTypeOf(err.body).toEqualTypeOf<
+        | { code: "UNAUTHORIZED" }
+        | { code: "NOT_FOUND" }
+        | { code: "CONFLICT"; conflictingId: string }
+      >();
+    }
   });
 });

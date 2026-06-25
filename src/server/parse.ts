@@ -79,13 +79,31 @@ export function parseBody(schema: TSchema, raw: unknown): unknown {
 }
 
 /**
- * Validates a handler response against a schema.
- * Strips unknown properties without throwing, but throws if known properties
- * don't match the expected types.
+ * Thrown when a handler's response doesn't match its schema. This is a server bug, so the
+ * adapter surfaces it as an `UNKNOWN_ERROR` to the client — but `onError` can detect this
+ * type to log or alert on the underlying `issues`.
+ */
+export class ResponseValidationError extends Error {
+  constructor(readonly issues: unknown) {
+    super("Response validation failed");
+    this.name = "ResponseValidationError";
+  }
+}
+
+/**
+ * Validates a handler response against a schema. Strips unknown properties, then throws a
+ * {@link ResponseValidationError} if the known properties don't match.
  */
 export function parseResponse(schema: TSchema, raw: unknown): unknown {
   const value = T.Clean(schema, raw);
-  T.Assert(schema, value);
+  try {
+    T.Assert(schema, value);
+  } catch (err) {
+    if (err instanceof T.AssertError) {
+      throw new ResponseValidationError(err.cause.errors);
+    }
+    throw err;
+  }
   return value;
 }
 

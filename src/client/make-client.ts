@@ -1,54 +1,71 @@
-import type { Static, TSchema } from "typebox";
-import type { Contract, Endpoint, EffectiveErrors, InferSchema } from "../contract";
-import { ApiError, computeEffectiveErrors } from "../contract";
+import type { TSchema } from "typebox";
+import type { Contract, Endpoint, InferSchema } from "../contract";
+import { ApiError } from "../contract";
 
-export type ClientOptions<E extends Endpoint, R = Omit<RequestInit, "method" | "body">> = {
+type ClientRequestInit = Omit<RequestInit, "method" | "body">;
+
+export type ClientOptions<E extends Endpoint> = {
   query?: InferSchema<E["query"]>;
-  request?: R;
+  request?: ClientRequestInit;
 };
 
-type ErrorCodes<S extends TSchema> = Static<S> extends { code: infer C } ? C & string : string;
-
-export type EndpointErrorGuard<S extends TSchema | undefined> = S extends TSchema
-  ? {
-      <C extends ErrorCodes<S>>(
-        code: C,
-      ): (err: unknown) => err is ApiError<Extract<Static<S>, { code: C }>>;
-      (err: unknown): err is ApiError<Static<S>>;
-    }
-  : (err: unknown) => err is ApiError;
-
-export type ClientEndpoint<
-  E extends Endpoint,
-  R = Omit<RequestInit, "method" | "body">,
-> = E["params"] extends TSchema
+export type ClientEndpoint<E extends Endpoint> = E["params"] extends TSchema
   ? E["body"] extends TSchema
     ? (
         params: InferSchema<E["params"]>,
         body: InferSchema<E["body"]>,
-        options?: ClientOptions<E, R>,
+        options?: ClientOptions<E>,
       ) => Promise<InferSchema<E["response"]>>
     : (
         params: InferSchema<E["params"]>,
-        options?: ClientOptions<E, R>,
+        options?: ClientOptions<E>,
       ) => Promise<InferSchema<E["response"]>>
   : E["body"] extends TSchema
     ? (
         body: InferSchema<E["body"]>,
-        options?: ClientOptions<E, R>,
+        options?: ClientOptions<E>,
       ) => Promise<InferSchema<E["response"]>>
-    : (options?: ClientOptions<E, R>) => Promise<InferSchema<E["response"]>>;
+    : (options?: ClientOptions<E>) => Promise<InferSchema<E["response"]>>;
 
-export type Client<
-  C extends Record<string, Endpoint>,
-  G extends TSchema | undefined = undefined,
-  R = Omit<RequestInit, "method" | "body">,
-> = {
-  [E in keyof C]: C[E] &
-    ClientEndpoint<C[E], R> & {
-      isApiError: EndpointErrorGuard<EffectiveErrors<G, C[E]["errors"]>>;
-    };
-};
+/** The full request context handed to `handleResponse` and `retry`. */
+export interface ResponseContext {
+  request: Request;
+  /** The response, or `undefined` when the fetch itself rejected (network error). */
+  response?: Response;
+  /** The parsed response body. */
+  data: unknown;
+  /** 1-based attempt number. */
+  attempt: number;
+  /**
+   * The pending failure for this attempt: an `ApiError` for a non-OK response, the
+   * raw error for a network rejection, or `undefined` for a successful response.
+   * `handleResponse` may throw to override it.
+   */
+  error?: unknown;
+}
+
+/** The context handed to `handleRequest` before a request is sent. */
+export interface RequestContext {
+  request: Request;
+  attempt: number;
+}
+
+export interface FetchClientConfig {
+  baseUrl: string;
+  /** The fetch implementation to use. Defaults to `globalThis.fetch`. */
+  fetch?: typeof globalThis.fetch;
+  /** Inspect/mutate or replace the outgoing request (e.g. auth headers). Re-runs each attempt. */
+  handleRequest?: (ctx: RequestContext) => Request | void | Promise<Request | void>;
+  /** Inspect every response; throw to reject an otherwise-successful response or reshape an error. */
+  handleResponse?: (ctx: ResponseContext) => void | Promise<void>;
+  /** Decide whether to retry a failed attempt. Return `true` to re-issue the request. */
+  retry?: (ctx: ResponseContext) => boolean | Promise<boolean>;
+}
+
+export type ClientOf<Ct extends Contract<any, any, any>> =
+  Ct extends Contract<infer C, any, any>
+    ? { [E in keyof C]: C[E] & ClientEndpoint<C[E]> } & { $contract: Ct }
+    : never;
 
 const extractArgs = (endpoint: Endpoint, args: any[]) => {
   const extractedArgs: Record<string, any> = {};
@@ -95,75 +112,105 @@ const buildQueryString = (query: Record<string, QueryValue | QueryValue[]>): str
   return `?${new URLSearchParams(entries).toString()}`;
 };
 
-// browser APIs don't allow null, so smooth over difference
-export type IsomorphicSignal = NonNullable<RequestInit["signal"]>;
+const parseBody = async (response: Response): Promise<unknown> => {
+  const text = await response.text();
+  if (text === "") return undefined;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return text;
+  }
+};
 
-export type FetchFn = (
-  input: string | URL,
-  init?: Omit<RequestInit, "signal"> & { signal?: IsomorphicSignal },
-) => Promise<unknown>;
-
-type InferRequestOptions<F> = F extends (input: any, init?: infer I) => any
-  ? Omit<NonNullable<I>, "method" | "body">
-  : Omit<RequestInit, "method" | "body">;
-
-export type ClientOf<
-  C extends Contract<any, any, any>,
-  F extends (input: string | URL, init?: any) => Promise<unknown> = FetchFn,
-> = C extends Contract<infer E, infer G, any> ? Client<E, G, InferRequestOptions<F>> : never;
-
-export interface FetchClientConfig<
-  F extends (input: string | URL, init?: any) => Promise<unknown> = FetchFn,
-> {
-  fetch: F;
-  baseUrl: string;
+interface RequestSpec {
+  url: string;
+  method: string;
+  body: unknown;
+  init: ClientRequestInit | undefined;
 }
 
-function makeEndpointIsApiError(_effectiveErrors: TSchema | undefined) {
-  return function isApiError(errOrCode: unknown) {
-    if (typeof errOrCode === "string") {
-      const code = errOrCode;
-      return (err: unknown) => err instanceof ApiError && err.body.code === code;
+async function runRequest(
+  config: FetchClientConfig,
+  fetchImpl: typeof globalThis.fetch,
+  spec: RequestSpec,
+  attempt = 1,
+): Promise<unknown> {
+  const headers = new Headers(spec.init?.headers);
+  const init: RequestInit = { ...spec.init, method: spec.method, headers };
+  if (spec.body !== undefined) {
+    init.body = JSON.stringify(spec.body);
+    if (!headers.has("content-type")) {
+      headers.set("content-type", "application/json");
     }
-    return errOrCode instanceof ApiError;
-  };
+  }
+  let request = new Request(spec.url, init);
+
+  if (config.handleRequest) {
+    const replaced = await config.handleRequest({ request, attempt });
+    if (replaced) request = replaced;
+  }
+
+  const ctx: ResponseContext = { request, attempt, data: undefined };
+
+  try {
+    ctx.response = await fetchImpl(request);
+  } catch (networkError) {
+    ctx.error = networkError;
+  }
+
+  if (ctx.response) {
+    ctx.data = await parseBody(ctx.response);
+    if (!ctx.response.ok) {
+      ctx.error = new ApiError(ctx.response.status, ctx.data, ctx.response);
+    }
+  }
+
+  if (config.handleResponse) {
+    try {
+      await config.handleResponse(ctx);
+    } catch (thrown) {
+      ctx.error = thrown;
+    }
+  }
+
+  if (ctx.error === undefined) {
+    return ctx.data;
+  }
+
+  if (config.retry && (await config.retry(ctx))) {
+    return runRequest(config, fetchImpl, spec, attempt + 1);
+  }
+
+  throw ctx.error;
 }
 
-export const createFetchClient = <
-  C extends Record<string, Endpoint>,
-  G extends TSchema | undefined = undefined,
-  F extends (input: string | URL, init?: any) => Promise<unknown> = FetchFn,
->(
-  contract: Contract<C, G, any>,
-  config: FetchClientConfig<F>,
-): Client<C, G, InferRequestOptions<F>> => {
+export const createFetchClient = <Ct extends Contract<any, any, any>>(
+  contract: Ct,
+  config: FetchClientConfig,
+): ClientOf<Ct> => {
+  const fetchImpl = config.fetch ?? globalThis.fetch;
   const basePath = contract.basePath === "/" ? "" : contract.basePath;
-  return Object.fromEntries(
-    Object.entries(contract.endpoints).map(([name, endpoint]) => {
-      const func = (...args: any[]) => {
-        const { body, options, params } = extractArgs(endpoint, args);
-        const path = `${config.baseUrl}${basePath}${replacePathParams(endpoint.path, params)}`;
-        const queryString = options?.query ? buildQueryString(options.query) : "";
-        const url = `${path}${queryString}`;
 
-        return config.fetch(url, {
-          method: endpoint.method,
-          body,
-          ...options?.request,
-        });
-      };
+  const client: Record<string, unknown> = { $contract: contract };
 
-      const effectiveErrors = computeEffectiveErrors(
-        (contract as Contract<any, any>).globalErrors,
-        endpoint.errors,
-      );
-      const isApiError = makeEndpointIsApiError(effectiveErrors);
+  for (const [name, endpoint] of Object.entries(contract.endpoints as Record<string, Endpoint>)) {
+    const func = (...args: any[]) => {
+      const { body, options, params } = extractArgs(endpoint, args);
+      const path = `${config.baseUrl}${basePath}${replacePathParams(endpoint.path, params)}`;
+      const queryString = options?.query ? buildQueryString(options.query) : "";
+      const url = `${path}${queryString}`;
+      return runRequest(config, fetchImpl, {
+        url,
+        method: endpoint.method,
+        body,
+        init: options?.request,
+      });
+    };
+    Object.assign(func, endpoint);
+    client[name] = func;
+  }
 
-      Object.assign(func, endpoint, { isApiError });
-
-      return [name, func];
-    }),
-  ) as never;
+  return client as ClientOf<Ct>;
 };
 
 export type StaticEndpoint<E extends Endpoint> = {

@@ -1,9 +1,8 @@
 import { describe, expect, expectTypeOf, test } from "vite-plus/test";
 import * as T from "typebox";
-import type { Static } from "typebox";
+import { ApiError } from "./api-error";
 import { combineContracts } from "./combine-contracts";
 import { createContract } from "./create-contract";
-import type { ContractErrors } from "./create-contract";
 
 const users = createContract("/users", {
   getUser: {
@@ -88,10 +87,26 @@ describe("combineContracts", () => {
     expect(() => combineContracts([a, b])).toThrow(/Duplicate endpoint name "shared"/);
   });
 
-  test("stores globalErrors option", () => {
-    const GlobalErrors = T.Object({ code: T.Literal("NOT_FOUND") });
-    const combined = combineContracts([users], { globalErrors: GlobalErrors });
-    expect(combined.globalErrors).toBe(GlobalErrors);
+  test("merges error maps from each sub-contract and the options", () => {
+    const a = createContract(
+      "/a",
+      { one: { method: "GET", path: "/", response: T.Null() } },
+      { errors: { 404: T.Object({ code: T.Literal("NOT_FOUND") }) } },
+    );
+    const b = createContract(
+      "/b",
+      { two: { method: "GET", path: "/", response: T.Null() } },
+      { errors: { 409: T.Object({ code: T.Literal("CONFLICT"), conflictingId: T.String() }) } },
+    );
+
+    const combined = combineContracts([a, b], {
+      errors: { 401: T.Object({ code: T.Literal("UNAUTHORIZED") }) },
+    });
+
+    expect(combined.error("NOT_FOUND")).toBeInstanceOf(ApiError);
+    expect(combined.error("NOT_FOUND").statusCode).toBe(404);
+    expect(combined.error("CONFLICT", { conflictingId: "1" }).statusCode).toBe(409);
+    expect(combined.error("UNAUTHORIZED").statusCode).toBe(401);
   });
 
   describe("type inference", () => {
@@ -126,40 +141,26 @@ describe("combineContracts", () => {
       expectTypeOf(combined.endpoints).toHaveProperty("ping");
     });
 
-    test("ContractErrors merges globalErrors with per-route errors", () => {
-      const GlobalErrors = T.Union([
-        T.Object({ code: T.Literal("NOT_FOUND") }),
-        T.Object({ code: T.Literal("UNAUTHORIZED") }),
-      ]);
-      const RouteErrors = T.Object({ code: T.Literal("CONFLICT") });
+    test("combined isError narrows to the union of all sub-contract errors", () => {
+      const a = createContract(
+        "/a",
+        { one: { method: "GET", path: "/", response: T.Null() } },
+        { errors: { 404: T.Object({ code: T.Literal("NOT_FOUND") }) } },
+      );
+      const b = createContract(
+        "/b",
+        { two: { method: "GET", path: "/", response: T.Null() } },
+        { errors: { 409: T.Object({ code: T.Literal("CONFLICT"), conflictingId: T.String() }) } },
+      );
 
-      const withRouteErrors = createContract({
-        createUser: {
-          method: "POST",
-          path: "/users",
-          body: T.Object({ name: T.String() }),
-          response: T.Object({ id: T.String() }),
-          errors: RouteErrors,
-        },
-        getUser: {
-          method: "GET",
-          path: "/users/:id",
-          params: T.Object({ id: T.String() }),
-          response: T.Object({ id: T.String() }),
-        },
-      });
+      const combined = combineContracts([a, b]);
+      const err: unknown = combined.error("CONFLICT", { conflictingId: "1" });
 
-      const combined = combineContracts([withRouteErrors], { globalErrors: GlobalErrors });
-
-      type Errors = ContractErrors<typeof combined>;
-
-      expectTypeOf<Static<Errors["createUser"]>>().toEqualTypeOf<
-        { code: "NOT_FOUND" } | { code: "UNAUTHORIZED" } | { code: "CONFLICT" }
-      >();
-
-      expectTypeOf<Static<NonNullable<Errors["getUser"]>>>().toEqualTypeOf<
-        { code: "NOT_FOUND" } | { code: "UNAUTHORIZED" }
-      >();
+      if (combined.isError(err)) {
+        expectTypeOf(err.body).toEqualTypeOf<
+          { code: "NOT_FOUND" } | { code: "CONFLICT"; conflictingId: string }
+        >();
+      }
     });
   });
 });

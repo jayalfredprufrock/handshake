@@ -53,6 +53,7 @@ export type CrudContract<T extends TSchema, C extends CrudContractConfig<T>> = {
   create: {
     method: "POST";
     path: "/";
+    responseCode: 201;
     body: TryOmit<T, Merge2<C["hidden"], C["readonly"]>>;
     response: TryOmit<T, C["hidden"]>;
   } & MetaField<EndpointMeta>;
@@ -96,6 +97,7 @@ export const createCrud = <T extends TSchema, const C extends CrudContractConfig
     create: {
       method: "POST",
       path: "/",
+      responseCode: 201,
       response,
       body: DeepOmit(schema, [...hidden, ...ro]) as any,
       ...metaField,

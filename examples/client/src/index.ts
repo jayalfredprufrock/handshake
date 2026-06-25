@@ -4,14 +4,6 @@ import { setTimeout } from "node:timers/promises";
 
 const api = createFetchClient(contract, {
   baseUrl: "http://localhost:3000",
-  async fetch(url, init) {
-    const res = await fetch(url, {
-      ...init,
-      headers: { "content-type": "application/json" },
-      body: init?.body ? JSON.stringify(init.body) : undefined,
-    });
-    return res.json();
-  },
 });
 
 async function main() {

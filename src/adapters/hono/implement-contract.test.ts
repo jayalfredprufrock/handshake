@@ -1,33 +1,11 @@
-import { describe, expect, test } from "vite-plus/test";
+import { describe, expect, test, vi } from "vite-plus/test";
 import * as T from "typebox";
 import { createContract, combineContracts, ApiError } from "../../contract";
+import { ResponseValidationError } from "../../server";
 import { implementContract, createHonoApp } from "./index";
 
 describe("error handling", () => {
-  test("ApiError pass-through when body matches route errors", async () => {
-    const contract = createContract({
-      getUser: {
-        method: "GET",
-        path: "/users/:id",
-        params: T.Object({ id: T.String() }),
-        response: T.Object({ id: T.String() }),
-        errors: T.Object({ code: T.Literal("NOT_FOUND") }),
-      },
-    });
-
-    const module = implementContract(contract, {
-      getUser: () => {
-        throw new ApiError(404, { code: "NOT_FOUND" });
-      },
-    });
-    const app = createHonoApp([module]);
-
-    const res = await app.request("/users/1");
-    expect(res.status).toBe(404);
-    expect(await res.json()).toEqual({ code: "NOT_FOUND" });
-  });
-
-  test("ApiError pass-through when body matches globalErrors", async () => {
+  test("ApiError pass-through when body matches a declared error", async () => {
     const contract = createContract(
       {
         getUser: {
@@ -37,7 +15,32 @@ describe("error handling", () => {
           response: T.Object({ id: T.String() }),
         },
       },
-      { globalErrors: T.Object({ code: T.Literal("UNAUTHORIZED") }) },
+      { errors: { 404: T.Object({ code: T.Literal("NOT_FOUND") }) } },
+    );
+
+    const module = implementContract(contract, {
+      getUser: () => {
+        throw contract.error("NOT_FOUND");
+      },
+    });
+    const app = createHonoApp([module]);
+
+    const res = await app.request("/users/1");
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ code: "NOT_FOUND" });
+  });
+
+  test("ApiError pass-through for a manually thrown declared error", async () => {
+    const contract = createContract(
+      {
+        getUser: {
+          method: "GET",
+          path: "/users/:id",
+          params: T.Object({ id: T.String() }),
+          response: T.Object({ id: T.String() }),
+        },
+      },
+      { errors: { 401: T.Object({ code: T.Literal("UNAUTHORIZED") }) } },
     );
 
     const module = implementContract(contract, {
@@ -52,7 +55,7 @@ describe("error handling", () => {
     expect(await res.json()).toEqual({ code: "UNAUTHORIZED" });
   });
 
-  test("ApiError pass-through for union of global and route errors", async () => {
+  test("ApiError pass-through with multiple declared statuses", async () => {
     const contract = createContract(
       {
         getUser: {
@@ -60,15 +63,19 @@ describe("error handling", () => {
           path: "/users/:id",
           params: T.Object({ id: T.String() }),
           response: T.Object({ id: T.String() }),
-          errors: T.Object({ code: T.Literal("NOT_FOUND") }),
         },
       },
-      { globalErrors: T.Object({ code: T.Literal("UNAUTHORIZED") }) },
+      {
+        errors: {
+          401: T.Object({ code: T.Literal("UNAUTHORIZED") }),
+          404: T.Object({ code: T.Literal("NOT_FOUND") }),
+        },
+      },
     );
 
     const module = implementContract(contract, {
       getUser: () => {
-        throw new ApiError(404, { code: "NOT_FOUND" });
+        throw contract.error("NOT_FOUND");
       },
     });
     const app = createHonoApp([module]);
@@ -78,7 +85,7 @@ describe("error handling", () => {
     expect(await res.json()).toEqual({ code: "NOT_FOUND" });
   });
 
-  test("foreign error routes through errorHandler", async () => {
+  test("foreign error routes through onError", async () => {
     const contract = createContract(
       {
         getUser: {
@@ -88,7 +95,7 @@ describe("error handling", () => {
           response: T.Object({ id: T.String() }),
         },
       },
-      { globalErrors: T.Object({ code: T.Literal("INTERNAL_ERROR") }) },
+      { errors: { 500: T.Object({ code: T.Literal("INTERNAL_ERROR") }) } },
     );
 
     const module = implementContract(contract, {
@@ -97,7 +104,7 @@ describe("error handling", () => {
       },
     });
     const app = createHonoApp([module], {
-      errorHandler: () => new ApiError(500, { code: "INTERNAL_ERROR" }),
+      onError: () => new ApiError(500, { code: "INTERNAL_ERROR" }),
     });
 
     const res = await app.request("/users/1");
@@ -105,7 +112,7 @@ describe("error handling", () => {
     expect(await res.json()).toEqual({ code: "INTERNAL_ERROR" });
   });
 
-  test("ApiError with body not in effective errors routes through errorHandler", async () => {
+  test("ApiError thrown with an undeclared status routes through onError", async () => {
     const contract = createContract(
       {
         getUser: {
@@ -113,10 +120,14 @@ describe("error handling", () => {
           path: "/users/:id",
           params: T.Object({ id: T.String() }),
           response: T.Object({ id: T.String() }),
-          errors: T.Object({ code: T.Literal("NOT_FOUND") }),
         },
       },
-      { globalErrors: T.Object({ code: T.Literal("INTERNAL_ERROR") }) },
+      {
+        errors: {
+          404: T.Object({ code: T.Literal("NOT_FOUND") }),
+          500: T.Object({ code: T.Literal("INTERNAL_ERROR") }),
+        },
+      },
     );
 
     const module = implementContract(contract, {
@@ -125,7 +136,7 @@ describe("error handling", () => {
       },
     });
     const app = createHonoApp([module], {
-      errorHandler: () => new ApiError(500, { code: "INTERNAL_ERROR" }),
+      onError: () => new ApiError(500, { code: "INTERNAL_ERROR" }),
     });
 
     const res = await app.request("/users/1");
@@ -133,7 +144,8 @@ describe("error handling", () => {
     expect(await res.json()).toEqual({ code: "INTERNAL_ERROR" });
   });
 
-  test("unhandled error re-thrown when no errorHandler", async () => {
+  test("unhandled error defaults to 500 UNKNOWN_ERROR when no onError", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const contract = createContract({
       getUser: {
         method: "GET",
@@ -152,21 +164,106 @@ describe("error handling", () => {
 
     const res = await app.request("/users/1");
     expect(res.status).toBe(500);
+    expect(await res.json()).toEqual({ code: "UNKNOWN_ERROR" });
+    expect(errorSpy).toHaveBeenCalled();
+    errorSpy.mockRestore();
   });
 
-  test("errorHandler works with combined contracts", async () => {
-    const users = createContract("/users", {
+  test("onError returning nothing falls through to the default", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const contract = createContract({
       getUser: {
         method: "GET",
-        path: "/:id",
+        path: "/users/:id",
         params: T.Object({ id: T.String() }),
         response: T.Object({ id: T.String() }),
-        errors: T.Object({ code: T.Literal("NOT_FOUND") }),
       },
     });
 
+    const module = implementContract(contract, {
+      getUser: () => {
+        throw new Error("boom");
+      },
+    });
+    const app = createHonoApp([module], { onError: () => undefined });
+
+    const res = await app.request("/users/1");
+    expect(res.status).toBe(500);
+    expect(await res.json()).toEqual({ code: "UNKNOWN_ERROR" });
+    errorSpy.mockRestore();
+  });
+
+  test("request validation errors use the VALIDATION_ERROR envelope", async () => {
+    const contract = createContract({
+      createUser: {
+        method: "POST",
+        path: "/users",
+        body: T.Object({ name: T.String() }),
+        response: T.Object({ id: T.String() }),
+      },
+    });
+    const module = implementContract(contract, { createUser: () => ({ id: "1" }) });
+    const app = createHonoApp([module]);
+
+    const res = await app.request("/users", {
+      method: "POST",
+      body: JSON.stringify({ name: 123 }),
+      headers: { "content-type": "application/json" },
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { code: string; issues: unknown };
+    expect(body.code).toBe("VALIDATION_ERROR");
+    expect(body.issues).toBeDefined();
+  });
+
+  test("a bad response surfaces as UNKNOWN_ERROR but onError can detect why", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const contract = createContract({
+      getUser: {
+        method: "GET",
+        path: "/users/:id",
+        params: T.Object({ id: T.String() }),
+        response: T.Object({ id: T.String() }),
+      },
+    });
+
+    // handler returns a response that violates the schema (id should be a string)
+    const module = implementContract(contract, {
+      getUser: () => ({ id: 123 }) as any,
+    });
+
+    let seenIssues: unknown;
+    const app = createHonoApp([module], {
+      onError: (err) => {
+        if (err instanceof ResponseValidationError) {
+          seenIssues = err.issues; // log / alert on the real reason
+        }
+      },
+    });
+
+    const res = await app.request("/users/1");
+    expect(res.status).toBe(500);
+    expect(await res.json()).toEqual({ code: "UNKNOWN_ERROR" }); // client never learns why
+    expect(seenIssues).toBeDefined(); // server can
+    errorSpy.mockRestore();
+  });
+
+  test("onError works with combined contracts", async () => {
+    const users = createContract(
+      "/users",
+      {
+        getUser: {
+          method: "GET",
+          path: "/:id",
+          params: T.Object({ id: T.String() }),
+          response: T.Object({ id: T.String() }),
+        },
+      },
+      { errors: { 404: T.Object({ code: T.Literal("NOT_FOUND") }) } },
+    );
+
     const combined = combineContracts([users], {
-      globalErrors: T.Object({ code: T.Literal("INTERNAL_ERROR") }),
+      errors: { 500: T.Object({ code: T.Literal("INTERNAL_ERROR") }) },
     });
 
     const module = implementContract(combined, {
@@ -175,7 +272,7 @@ describe("error handling", () => {
       },
     });
     const app = createHonoApp([module], {
-      errorHandler: () => new ApiError(500, { code: "INTERNAL_ERROR" }),
+      onError: () => new ApiError(500, { code: "INTERNAL_ERROR" }),
     });
 
     const res = await app.request("/users/1");
@@ -183,7 +280,7 @@ describe("error handling", () => {
     expect(await res.json()).toEqual({ code: "INTERNAL_ERROR" });
   });
 
-  test("errorHandler works with named group combined contracts", async () => {
+  test("onError works with named group combined contracts", async () => {
     const users = createContract("/users", {
       getUser: {
         method: "GET",
@@ -196,7 +293,7 @@ describe("error handling", () => {
     const combined = combineContracts(
       { users },
       {
-        globalErrors: T.Object({ code: T.Literal("INTERNAL_ERROR") }),
+        errors: { 500: T.Object({ code: T.Literal("INTERNAL_ERROR") }) },
       },
     );
 
@@ -206,12 +303,46 @@ describe("error handling", () => {
       },
     });
     const app = createHonoApp([module], {
-      errorHandler: () => new ApiError(500, { code: "INTERNAL_ERROR" }),
+      onError: () => new ApiError(500, { code: "INTERNAL_ERROR" }),
     });
 
     const res = await app.request("/users/1");
     expect(res.status).toBe(500);
     expect(await res.json()).toEqual({ code: "INTERNAL_ERROR" });
+  });
+
+  test("uses responseCode for the success status (default 200)", async () => {
+    const contract = createContract({
+      createUser: {
+        method: "POST",
+        path: "/users",
+        body: T.Object({ name: T.String() }),
+        response: T.Object({ id: T.String() }),
+        responseCode: 201,
+      },
+      listUsers: {
+        method: "GET",
+        path: "/users",
+        response: T.Array(T.Object({ id: T.String() })),
+      },
+    });
+
+    const module = implementContract(contract, {
+      createUser: () => ({ id: "1" }),
+      listUsers: () => [],
+    });
+    const app = createHonoApp([module]);
+
+    const created = await app.request("/users", {
+      method: "POST",
+      body: JSON.stringify({ name: "Ada" }),
+      headers: { "content-type": "application/json" },
+    });
+    expect(created.status).toBe(201);
+    expect(await created.json()).toEqual({ id: "1" });
+
+    const listed = await app.request("/users");
+    expect(listed.status).toBe(200);
   });
 
   test("throws at implementContract time when a handler is missing", () => {
