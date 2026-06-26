@@ -1,0 +1,87 @@
+---
+title: OpenAPI
+description: Generate an OpenAPI 3.1 document from a handshake contract.
+---
+
+`@jayalfredprufrock/handshake/openapi` turns a contract into an [OpenAPI 3.1](https://spec.openapis.org/oas/v3.1.0) document — paths, parameters, request/response bodies, and every error — with no code generation or runtime cost on your client or server.
+
+## Usage
+
+```ts
+import { generateOpenApi } from "@jayalfredprufrock/handshake/openapi";
+import { contract } from "./contract";
+
+const spec = generateOpenApi(contract, {
+  info: { title: "My API", version: "1.0.0" },
+  servers: [{ url: "https://api.example.com" }],
+});
+
+// write it to disk, serve it, or hand it to Scalar / Swagger UI
+await Bun.write("openapi.json", JSON.stringify(spec, null, 2));
+```
+
+`generateOpenApi(contract, options)` returns a plain `OpenAPIV3_1.Document` (typed via [`openapi-types`](https://www.npmjs.com/package/openapi-types)).
+
+## Options
+
+```ts
+interface GenerateOpenApiOptions {
+  info: OpenAPIV3_1.InfoObject; // required — `title` and `version` are mandatory
+  servers?: OpenAPIV3_1.ServerObject[];
+  security?: OpenAPIV3_1.SecurityRequirementObject[];
+  tags?: OpenAPIV3_1.TagObject[]; // defaults to one tag per named group
+}
+```
+
+Everything that isn't part of the contract (title, version, servers, security) is supplied here.
+
+## What gets generated
+
+| Contract                                    | OpenAPI                                                                                          |
+| ------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `:param` path segments                      | `{param}` path templates                                                                         |
+| `basePath` + endpoint `path`                | the full path key                                                                                |
+| `params` / `query` / `headers` schemas      | individual `parameters` (path params always `required`; query/header `required` from the schema) |
+| `body` schema                               | `requestBody` (`application/json`)                                                               |
+| `response` + `responseCode` (default `200`) | the success response                                                                             |
+| `errors` map + framework errors             | error responses (see below)                                                                      |
+| `description`                               | operation `description`                                                                          |
+| endpoint name                               | `operationId`                                                                                    |
+| `meta` (minus `tags`)                       | `x-*` extensions                                                                                 |
+
+### Schemas and `$ref`
+
+TypeBox schemas are JSON Schema 2020-12, which OpenAPI 3.1 accepts directly. A schema that declares a TypeBox **`$id`** is hoisted into `components/schemas` and referenced with `$ref` (so shared types appear once); schemas without a `$id` are inlined.
+
+```ts
+const User = Type.Object({ id: Type.String(), name: Type.String() }, { $id: "User" });
+// → components/schemas/User, referenced wherever User is used
+```
+
+### Errors
+
+Errors are **contract-wide**, so every operation documents the full set: the framework `VALIDATION_ERROR` (400) and `UNKNOWN_ERROR` (500), plus every declared error. Each is emitted as a named envelope schema (`{ kind, code, status, message, details }`) in `components/schemas`, and grouped into a shared response per status under `components/responses`. When multiple codes share a status, the response body is a `oneOf` with a `code` discriminator:
+
+```jsonc
+// responses for a 400 that has both VALIDATION_ERROR and a declared RATE_LIMIT:
+{
+  "oneOf": [
+    { "$ref": "#/components/schemas/VALIDATION_ERROR" },
+    { "$ref": "#/components/schemas/RATE_LIMIT" },
+  ],
+  "discriminator": {
+    "propertyName": "code",
+    "mapping": {
+      /* … */
+    },
+  },
+}
+```
+
+### Tags
+
+For a [combined contract](/handshake/core/contracts/#splitting-contracts-across-files) built with the named-object form, each group name becomes a tag and each operation is tagged with its group. Otherwise, an endpoint's `meta.tags` (a `string[]`) are used.
+
+## Scope
+
+This is intentionally lean for now: JSON request/response bodies, parameters, and the full error model. Security schemes, examples, multiple content types, and a per-operation transform hook are planned for a later pass.

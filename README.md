@@ -213,7 +213,7 @@ Every error the server emits — declared or not — is a handshake error envelo
 - **`VALIDATION_ERROR`** (400) — a request failed schema validation; `details` is a normalized `{ path?, keyword?, message }[]` array of issues.
 - **`UNKNOWN_ERROR`** (500) — an unexpected error, or a handler response that failed validation. The cause is **never leaked** to the client and is logged on the server.
 
-Map unexpected (non-`ApiError`) errors to a typed `ApiError` with `onError`. Returning an `ApiError` shapes the response; returning nothing falls through to `UNKNOWN_ERROR`. The server can **never** emit a non-`ApiError` body, regardless of what `onError` does:
+A thrown `ApiError` with a **recognized code** (declared in a contract, or a built-in `VALIDATION_ERROR`/`UNKNOWN_ERROR`) is serialized automatically — wherever it's thrown (handler, middleware, service), with no `onError` needed. `onError` handles everything else: plain exceptions, Hono `HTTPException`s, and `ApiError`s with an unrecognized code. Return an `ApiError` to shape the response, or return nothing for the default — an `HTTPException` keeps its own status, anything else becomes `UNKNOWN_ERROR`. The server can **never** emit a non-`ApiError` body, regardless of what `onError` does:
 
 ```ts
 import { ApiError } from "@jayalfredprufrock/handshake/contract";
@@ -230,7 +230,7 @@ const app = createHonoApp([module], {
 });
 ```
 
-Any error you throw from a handler that isn't a declared `ApiError` reaches `onError` fully intact (every property, the stack) while the client only ever sees the generic `UNKNOWN_ERROR` — so you can carry internal context on your own error classes and inspect it there.
+Any error that isn't a recognized contract error reaches `onError` fully intact (every property, the stack) while the client only ever sees the generic `UNKNOWN_ERROR` — so you can carry internal context on your own error classes and inspect it there.
 
 ## Request headers
 

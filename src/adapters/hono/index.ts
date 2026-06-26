@@ -1,5 +1,5 @@
 import type { Contract, Endpoint, ErrorMap, InferSchema, ValidationIssue } from "../../contract";
-import { ApiError, errorEnvelope, joinPath } from "../../contract";
+import { ApiError, RESERVED_ERROR_CODES, errorEnvelope, joinPath } from "../../contract";
 import {
   AssertError,
   type BaseHandlerInput,
@@ -48,10 +48,14 @@ export interface ImplementContractOptions<HonoEnv extends Env = Env> {
 
 export interface CreateHonoAppOptions<HonoEnv extends Env = Env> {
   /**
-   * Maps an unexpected (non-`ApiError`) error to a typed `ApiError`. Return an `ApiError`
-   * to control the response, or nothing to fall through to the built-in 500 `UNKNOWN_ERROR`.
-   * Returning an `ApiError` is the only way to shape the response — the server can never emit
-   * a non-`ApiError` body, regardless of whether this is provided or how it behaves.
+   * Handle an error the framework didn't already serialize as a recognized contract
+   * error. A **known-code** `ApiError` — a code declared in a contract, or a built-in
+   * `VALIDATION_ERROR`/`UNKNOWN_ERROR` — is serialized automatically and never reaches
+   * `onError`; everything else does: plain exceptions, Hono `HTTPException`s, and
+   * `ApiError`s with an unrecognized code. Return an `ApiError` to shape the response,
+   * or nothing for the default — an `HTTPException` keeps its own status, anything
+   * else becomes a 500 `UNKNOWN_ERROR`. The server can never emit a non-`ApiError`
+   * body, regardless of what this does.
    */
   onError?: (err: unknown, c: Context<HonoEnv>) => ApiError | void | Promise<ApiError | void>;
   middleware?: EndpointMiddlewareFactory<HonoEnv> | EndpointMiddlewareFactory<HonoEnv>[];
@@ -61,6 +65,8 @@ export interface RouteModule {
   _hono: Hono;
   _basePath: string;
   _endpoints: Record<string, Endpoint>;
+  /** Error codes declared by this module's contract (for the known-code check). */
+  _errorCodes: Set<string>;
   _rebuild: (globalFactory: EndpointMiddlewareFactory) => Hono;
 }
 
@@ -185,17 +191,17 @@ function buildModule(
           result = await handler(input as any);
         } catch (err) {
           if (!(err instanceof ApiError)) throw err;
+          // Only a code declared by THIS contract is serialized here (with details
+          // validation). Framework codes and unrecognized codes bubble to root.onError,
+          // which serializes known codes and routes the rest to onError.
+          const def = errors?.[err.code];
+          if (!def) throw err;
           const emit = (details: unknown) =>
             c.json(
               errorEnvelope(err.code, err.status, err.message, details) as any,
               err.status as any,
             );
-          if (!shouldValidate) {
-            return emit(err.details);
-          }
-          const def = errors?.[err.code];
-          if (!def) throw err; // undeclared code → routes through onError
-          if (def.details) {
+          if (shouldValidate && def.details) {
             try {
               return emit(parseResponse(def.details, err.details));
             } catch (validationError) {
@@ -229,6 +235,7 @@ function buildModule(
     _hono: buildHono(),
     _basePath: mountPath,
     _endpoints: endpoints,
+    _errorCodes: new Set(Object.keys(errors ?? {})),
     _rebuild: buildHono,
   };
 }
@@ -319,12 +326,30 @@ export function createHonoApp<HonoEnv extends Env = Env>(
 ): Hono<HonoEnv> {
   const root = new Hono<HonoEnv>();
 
+  // Codes that are "known": the framework's built-ins plus every code declared by
+  // any module's contract. A thrown ApiError with a known code is serialized as-is
+  // (wherever it was thrown); anything else is "unknown" and routed to the hook.
+  const knownCodes = new Set<string>(RESERVED_ERROR_CODES);
+  for (const module of modules) {
+    for (const code of module._errorCodes) knownCodes.add(code);
+  }
+
   const onError = options?.onError;
   root.onError(async (err, c) => {
+    // A known-code ApiError is a recognized, deliberate contract error — serialize
+    // it as-is. Covers ApiErrors thrown anywhere that bypass the per-route catch
+    // (middleware, services) and framework codes a handler rethrows.
+    if (err instanceof ApiError && knownCodes.has(err.code)) {
+      return c.json(
+        errorEnvelope(err.code, err.status, err.message, err.details) as any,
+        err.status as any,
+      );
+    }
+    // Everything else is unknown: a non-ApiError, or an ApiError with an
+    // unrecognized code. Let the hook map it to a typed error.
     if (onError) {
       try {
         const mapped = await onError(err, c);
-        // Only an ApiError can shape the response; anything else falls through.
         if (mapped instanceof ApiError) {
           return c.json(
             errorEnvelope(mapped.code, mapped.status, mapped.message, mapped.details) as any,
@@ -343,9 +368,7 @@ export function createHonoApp<HonoEnv extends Env = Env>(
     if (err instanceof HTTPException) {
       return err.getResponse();
     }
-    // Genuinely unexpected error — log (matching Hono's default) and emit the
-    // contract's UNKNOWN_ERROR envelope without leaking the cause.
-    console.error(err);
+
     return c.json(errorEnvelope("UNKNOWN_ERROR", 500, "Unknown error", undefined), 500);
   });
 

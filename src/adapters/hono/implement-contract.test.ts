@@ -275,6 +275,105 @@ describe("error handling", () => {
     });
   });
 
+  test("an ApiError thrown in middleware is serialized and passed through (no onError)", async () => {
+    const contract = createContract(
+      {
+        getUser: {
+          method: "GET",
+          path: "/users/:id",
+          params: T.Object({ id: T.String() }),
+          response: T.Object({ id: T.String() }),
+        },
+      },
+      { errors: { NOT_FOUND: { status: 404 } } },
+    );
+    const module = implementContract(contract, (group) => {
+      group.use(async () => {
+        throw contract.error("NOT_FOUND", "from middleware");
+      });
+      group.implement("getUser", ({ params }) => ({ id: params.id }));
+    });
+    const app = createHonoApp([module]);
+
+    const res = await app.request("/users/1");
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({
+      kind: "HANDSHAKE",
+      code: "NOT_FOUND",
+      status: 404,
+      message: "from middleware",
+    });
+  });
+
+  test("a thrown framework error (VALIDATION_ERROR) is serialized without onError handling", async () => {
+    const contract = createContract({
+      getUser: {
+        method: "GET",
+        path: "/users/:id",
+        params: T.Object({ id: T.String() }),
+        response: T.Object({ id: T.String() }),
+      },
+    });
+    const module = implementContract(contract, {
+      getUser: () => {
+        throw contract.error("VALIDATION_ERROR", "Phone invalid");
+      },
+    });
+    const app = createHonoApp([module]);
+
+    const res = await app.request("/users/1");
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({
+      kind: "HANDSHAKE",
+      code: "VALIDATION_ERROR",
+      status: 400,
+      message: "Phone invalid",
+    });
+  });
+
+  test("an ApiError with an unrecognized code is treated as unknown", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const contract = createContract(
+      {
+        getUser: {
+          method: "GET",
+          path: "/users/:id",
+          params: T.Object({ id: T.String() }),
+          response: T.Object({ id: T.String() }),
+        },
+      },
+      { errors: { NOT_FOUND: { status: 404 } } },
+    );
+
+    // No hook → an unrecognized code collapses to UNKNOWN_ERROR.
+    const m1 = implementContract(contract, {
+      getUser: () => {
+        throw new ApiError({ code: "TEAPOT", status: 418, message: "nope" });
+      },
+    });
+    const res1 = await createHonoApp([m1]).request("/users/1");
+    expect(res1.status).toBe(500);
+    expect(((await res1.json()) as { code: string }).code).toBe("UNKNOWN_ERROR");
+
+    // The hook receives the unrecognized ApiError and can map it to a known one.
+    let seen: string | undefined;
+    const m2 = implementContract(contract, {
+      getUser: () => {
+        throw new ApiError({ code: "TEAPOT", status: 418, message: "nope" });
+      },
+    });
+    const res2 = await createHonoApp([m2], {
+      onError: (err) => {
+        if (err instanceof ApiError) seen = err.code;
+        return contract.error("NOT_FOUND", "mapped");
+      },
+    }).request("/users/1");
+    expect(seen).toBe("TEAPOT");
+    expect(res2.status).toBe(404);
+    expect(((await res2.json()) as { code: string }).code).toBe("NOT_FOUND");
+    errorSpy.mockRestore();
+  });
+
   test("request validation errors use the VALIDATION_ERROR envelope", async () => {
     const contract = createContract({
       createUser: {

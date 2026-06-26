@@ -24,6 +24,7 @@
     "./client": "./src/client/index.ts",
     "./contract": "./src/contract/index.ts",
     "./hono": "./src/adapters/hono/index.ts",
+    "./openapi": "./src/openapi/index.ts",
     "./server": "./src/server/index.ts",
     "./typebox": "./src/typebox/index.ts",
     "./package.json": "./package.json"
@@ -43,6 +44,10 @@
         "import": "./dist/hono.mjs",
         "require": "./dist/hono.cjs"
       },
+      "./openapi": {
+        "import": "./dist/openapi.mjs",
+        "require": "./dist/openapi.cjs"
+      },
       "./server": {
         "import": "./dist/server.mjs",
         "require": "./dist/server.cjs"
@@ -57,6 +62,9 @@
   "scripts": {
     "dev": "vp run -r dev",
     "prepare": "vp config"
+  },
+  "dependencies": {
+    "openapi-types": "catalog:"
   },
   "devDependencies": {
     "@semantic-release/exec": "^7.1.0",

@@ -21,6 +21,7 @@ export default defineConfig({
       server: "src/server/index.ts",
       hono: "src/adapters/hono/index.ts",
       typebox: "src/typebox/index.ts",
+      openapi: "src/openapi/index.ts",
     },
   },
   run: {

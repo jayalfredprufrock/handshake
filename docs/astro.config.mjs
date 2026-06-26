@@ -37,6 +37,10 @@ export default defineConfig({
           label: "Client",
           items: [{ label: "Fetch Client", slug: "client/fetch" }],
         },
+        {
+          label: "Tooling",
+          items: [{ label: "OpenAPI", slug: "tooling/openapi" }],
+        },
         { label: "FAQ", slug: "faq" },
       ],
     }),

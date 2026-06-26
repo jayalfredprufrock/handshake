@@ -97,7 +97,9 @@ getUser: ({ params, headers, c }) => {
 
 ## Error handling
 
-Every error the server emits is an `ApiError` (`{ code, status, message, details }`). Throw a declared error with `contract.error("CODE", message, details?)` (or `new ApiError({ code, status, message, details })`); the `details` are validated against the code's `details` schema before being sent. On the wire the response is a fixed envelope — `{ kind: "HANDSHAKE", code, status, message, details }` — matching the `ApiError` itself. The client reconstructs it, so `err.message` round-trips; the same `message` is available to `onError` as `err.message`.
+Every error the server emits is an `ApiError` (`{ code, status, message, details }`). Throw a declared error with `contract.error("CODE", message, details?)` (or `new ApiError({ code, status, message, details })`); the `details` of a declared code are validated against its `details` schema before being sent. On the wire the response is a fixed envelope — `{ kind: "HANDSHAKE", code, status, message, details }` — matching the `ApiError` itself. The client reconstructs it, so `err.message` round-trips; the same `message` is available to `onError` as `err.message`.
+
+A thrown `ApiError` whose `code` is **recognized** — declared in a contract, or a built-in `VALIDATION_ERROR`/`UNKNOWN_ERROR` — is serialized to its envelope **wherever it's thrown** (a handler, a middleware, a service), with no `onError` handling required. An `ApiError` with an _unrecognized_ code is treated as unknown and routed to `onError` (see below).
 
 Two codes are **reserved** and emitted by the framework:
 
@@ -115,7 +117,12 @@ interface CreateHonoAppOptions {
 }
 ```
 
-`onError` maps unexpected (non-`ApiError`) errors to a typed `ApiError`. Return an `ApiError` to shape the response; return nothing to fall through to `UNKNOWN_ERROR`. The server can **never** emit a non-`ApiError` body, regardless of what `onError` does (a throwing or malformed `onError` still yields a safe `UNKNOWN_ERROR`).
+`onError` handles any error the framework didn't already serialize as a recognized contract error. A **known-code** `ApiError` is serialized automatically and never reaches `onError`; **everything else** does — plain exceptions, Hono `HTTPException`s, and `ApiError`s with an unrecognized code. Return an `ApiError` to shape the response, or return nothing for the default disposition:
+
+- an `HTTPException` → keeps its own status (passed through),
+- anything else → `UNKNOWN_ERROR` (500).
+
+The server can **never** emit a non-`ApiError` body, regardless of what `onError` does (a throwing or malformed `onError` still yields a safe `UNKNOWN_ERROR`).
 
 ```ts
 import { ApiError } from "@jayalfredprufrock/handshake/contract";
@@ -130,11 +137,11 @@ const app = createHonoApp([module], {
 });
 ```
 
-Any error you throw that isn't a declared `ApiError` reaches `onError` fully intact (custom fields, stack) while the client only ever sees the generic `UNKNOWN_ERROR` — so you can carry internal context on your own error classes and inspect it there. `ResponseValidationError` (from `/server`) is the framework's own example: it carries the validation `issues` for logging while the client sees `UNKNOWN_ERROR`.
+Any error that isn't a recognized contract error reaches `onError` fully intact (custom fields, stack) while the client only ever sees the generic `UNKNOWN_ERROR` — so you can carry internal context on your own error classes and inspect it there. `ResponseValidationError` (from `/server`) is the framework's own example: it carries the validation `issues` for logging while the client sees `UNKNOWN_ERROR`.
 
 ### Framework and middleware errors
 
-A Hono `HTTPException` — thrown by the framework or by middleware (e.g. bearer auth raising a `401`) — **keeps its own status and response**; it is not collapsed into `UNKNOWN_ERROR`. The client surfaces it as a non-handshake [`HttpError`](/handshake/client/fetch/#errors) carrying that status. `onError` still sees it first, so you can convert it to a typed contract error if you prefer:
+A Hono `HTTPException` — thrown by the framework or by middleware (e.g. bearer auth raising a `401`) — reaches `onError` like any other non-contract error. If `onError` doesn't return an `ApiError` for it, it **keeps its own status and response** (it is _not_ collapsed into `UNKNOWN_ERROR`), and the client surfaces it as a non-handshake [`HttpError`](/handshake/client/fetch/#errors) carrying that status. Because `onError` sees it first, you can convert it to a typed contract error if you prefer:
 
 ```ts
 import { HTTPException } from "hono/http-exception";
