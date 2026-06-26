@@ -1,4 +1,4 @@
-import { describe, expect, test, vi } from "vite-plus/test";
+import { describe, expect, test } from "vite-plus/test";
 import * as T from "typebox";
 import { HTTPException } from "hono/http-exception";
 import { createContract, combineContracts, ApiError } from "../../contract";
@@ -163,7 +163,6 @@ describe("error handling", () => {
   });
 
   test("unhandled error defaults to 500 UNKNOWN_ERROR when no onError", async () => {
-    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const contract = createContract({
       getUser: {
         method: "GET",
@@ -188,12 +187,9 @@ describe("error handling", () => {
       status: 500,
       message: "Unknown error",
     });
-    expect(errorSpy).toHaveBeenCalled();
-    errorSpy.mockRestore();
   });
 
   test("onError returning nothing falls through to the default", async () => {
-    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const contract = createContract({
       getUser: {
         method: "GET",
@@ -218,7 +214,6 @@ describe("error handling", () => {
       status: 500,
       message: "Unknown error",
     });
-    errorSpy.mockRestore();
   });
 
   test("a Hono HTTPException keeps its status instead of becoming UNKNOWN_ERROR", async () => {
@@ -332,7 +327,6 @@ describe("error handling", () => {
   });
 
   test("an ApiError with an unrecognized code is treated as unknown", async () => {
-    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const contract = createContract(
       {
         getUser: {
@@ -371,7 +365,6 @@ describe("error handling", () => {
     expect(seen).toBe("TEAPOT");
     expect(res2.status).toBe(404);
     expect(((await res2.json()) as { code: string }).code).toBe("NOT_FOUND");
-    errorSpy.mockRestore();
   });
 
   test("request validation errors use the VALIDATION_ERROR envelope", async () => {
@@ -406,7 +399,6 @@ describe("error handling", () => {
   });
 
   test("a bad response surfaces as UNKNOWN_ERROR but onError can detect why", async () => {
-    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const contract = createContract({
       getUser: {
         method: "GET",
@@ -439,7 +431,6 @@ describe("error handling", () => {
       message: "Unknown error",
     }); // client never learns why
     expect(seenIssues).toBeDefined(); // server can
-    errorSpy.mockRestore();
   });
 
   test("onError works with combined contracts", async () => {

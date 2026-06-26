@@ -356,8 +356,9 @@ export function createHonoApp<HonoEnv extends Env = Env>(
             mapped.status as any,
           );
         }
-      } catch (hookError) {
-        console.error(hookError);
+      } catch {
+        // A throwing onError still yields a safe response — fall through to the
+        // HTTPException passthrough / UNKNOWN_ERROR default below.
       }
     }
     // Preserve Hono's own error handling: an HTTPException (from the framework or

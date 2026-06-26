@@ -5,7 +5,7 @@ description: How Handshake validates and coerces request and response data.
 
 Handshake validates all incoming request data and outgoing responses using [TypeBox](https://github.com/sinclairzx81/typebox) schemas. Each part of the request — path params, query params, headers, and body — has its own validation pipeline tailored to its characteristics.
 
-All errors share a single `{ kind: "HANDSHAKE", code, status, message, details }` envelope. A failed **request** validation returns a **400** `VALIDATION_ERROR`; a failed **response** validation is a server bug and returns a **500** `UNKNOWN_ERROR` (the reason is logged, never sent to the client). See [error handling](/handshake/server/hono/#error-handling).
+All errors share a single `{ kind: "HANDSHAKE", code, status, message, details }` envelope. A failed **request** validation returns a **400** `VALIDATION_ERROR`; a failed **response** validation is a server bug and returns a **500** `UNKNOWN_ERROR` (the reason is never sent to the client — inspect it via `onError`). See [error handling](/handshake/server/hono/#error-handling).
 
 ## Path Parameters
 
@@ -107,7 +107,7 @@ Response validation ensures that handlers return data matching the contract. It 
 This means:
 
 - Extra properties in the handler's return value are **silently removed** before sending
-- Wrong types or missing required properties are treated as a **server bug**: the client receives a **500** `UNKNOWN_ERROR` (the reason is never leaked), the failure is logged, and `onError` can detect it via `ResponseValidationError`.
+- Wrong types or missing required properties are treated as a **server bug**: the client receives a **500** `UNKNOWN_ERROR` (the reason is never leaked), and `onError` can detect it via `ResponseValidationError` (to log or alert).
 
 ### Configuring Response Validation
 
@@ -146,4 +146,4 @@ Every error response uses the same envelope — `{ kind: "HANDSHAKE", code, stat
 }
 ```
 
-Response validation failures return status **500** with `code: "UNKNOWN_ERROR"` (message `"Unknown error"`) — the underlying `issues` are logged and exposed to `onError` (via `ResponseValidationError`) but never sent to the client.
+Response validation failures return status **500** with `code: "UNKNOWN_ERROR"` (message `"Unknown error"`) — the underlying `issues` are exposed to `onError` (via `ResponseValidationError`) for logging, but never sent to the client.

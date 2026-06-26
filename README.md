@@ -211,7 +211,7 @@ if (contract.isError(err, "CONFLICT")) {
 Every error the server emits — declared or not — is a handshake error envelope, so clients reconstruct them uniformly as `ApiError`. Two codes are **reserved** by the framework and cannot be declared in a contract (but are always available to `contract.error`/`contract.isError`, since the client can receive them on any endpoint):
 
 - **`VALIDATION_ERROR`** (400) — a request failed schema validation; `details` is a normalized `{ path?, keyword?, message }[]` array of issues.
-- **`UNKNOWN_ERROR`** (500) — an unexpected error, or a handler response that failed validation. The cause is **never leaked** to the client and is logged on the server.
+- **`UNKNOWN_ERROR`** (500) — an unexpected error, or a handler response that failed validation. The cause is **never leaked** to the client; inspect or log it in `onError`. (The library never writes to the console itself.)
 
 A thrown `ApiError` with a **recognized code** (declared in a contract, or a built-in `VALIDATION_ERROR`/`UNKNOWN_ERROR`) is serialized automatically — wherever it's thrown (handler, middleware, service), with no `onError` needed. `onError` handles everything else: plain exceptions, Hono `HTTPException`s, and `ApiError`s with an unrecognized code. Return an `ApiError` to shape the response, or return nothing for the default — an `HTTPException` keeps its own status, anything else becomes `UNKNOWN_ERROR`. The server can **never** emit a non-`ApiError` body, regardless of what `onError` does:
 
@@ -225,7 +225,7 @@ const app = createHonoApp([module], {
     if (err instanceof ResponseValidationError) alert("contract drift", err.issues);
     if (err instanceof PaymentGatewayError)
       return contract.error("UNAUTHORIZED", "gateway rejected");
-    // return nothing → UNKNOWN_ERROR (logged)
+    // return nothing → UNKNOWN_ERROR (cause never sent to the client)
   },
 });
 ```

@@ -1,4 +1,4 @@
-import { describe, expect, test, vi } from "vite-plus/test";
+import { describe, expect, test } from "vite-plus/test";
 import * as T from "typebox";
 import { createContract } from "../contract";
 import type { AdapterFactory } from "./types";
@@ -553,26 +553,21 @@ export function runAdapterTests(createAdapter: AdapterFactory) {
       });
 
       test("returns 500 when known response properties have wrong type", async () => {
-        // The adapter logs the underlying server bug via console.error; silence it.
-        const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
         const api = createAdapter(responseContract);
         api.handle("getUser", (() => ({ id: 123, name: "Alice" })) as any);
         const app = api.build();
 
         const res = await app.request("/users/1");
         expect(res.status).toBe(500);
-        errorSpy.mockRestore();
       });
 
       test("returns 500 when required response properties are missing", async () => {
-        const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
         const api = createAdapter(responseContract);
         api.handle("getUser", (() => ({ id: "1" })) as any);
         const app = api.build();
 
         const res = await app.request("/users/1");
         expect(res.status).toBe(500);
-        errorSpy.mockRestore();
       });
 
       test("can be disabled globally", async () => {

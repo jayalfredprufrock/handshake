@@ -104,7 +104,7 @@ A thrown `ApiError` whose `code` is **recognized** — declared in a contract, o
 Two codes are **reserved** and emitted by the framework:
 
 - **`VALIDATION_ERROR`** (400) — a request failed validation; `details` is a normalized `{ path?, keyword?, message }[]` array of issues.
-- **`UNKNOWN_ERROR`** (500) — an unexpected error, or a handler response that failed validation. The cause is never sent to the client; it's logged on the server.
+- **`UNKNOWN_ERROR`** (500) — an unexpected error, or a handler response that failed validation. The cause is never sent to the client; inspect or log it in `onError`. (The library never writes to the console itself.)
 
 You can't _declare_ these in a contract's error map, but they're always throwable via `contract.error` (`contract.error("VALIDATION_ERROR", msg, issues?)` — the `issues` array is optional, e.g. `contract.error("VALIDATION_ERROR", "Phone number is invalid")` — and `contract.error("UNKNOWN_ERROR", msg)`) and matched by `contract.isError` — the client may receive them from any endpoint.
 
@@ -132,7 +132,7 @@ const app = createHonoApp([module], {
   onError: (err) => {
     if (err instanceof ResponseValidationError) log.alert("contract drift", err.issues);
     if (err instanceof DatabaseError) metrics.inc("db_error");
-    // return nothing → client gets { code: "UNKNOWN_ERROR" } (logged)
+    // return nothing → client gets { code: "UNKNOWN_ERROR" } (cause never sent)
   },
 });
 ```
