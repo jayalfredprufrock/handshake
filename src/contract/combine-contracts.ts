@@ -9,7 +9,6 @@ import type {
 } from "./create-contract";
 import { applyContractHeaders, buildContract } from "./create-contract";
 import type { TSchema } from "typebox";
-import * as T from "typebox";
 
 type UnionToIntersection<U> = (U extends any ? (x: U) => void : never) extends (x: infer I) => void
   ? I
@@ -17,7 +16,12 @@ type UnionToIntersection<U> = (U extends any ? (x: U) => void : never) extends (
 
 type EndpointsOf<C> = C extends Contract<infer E, any, any> ? E : never;
 
-type EntryOf<C> = C extends Contract<any, infer Entry, any> ? Entry : never;
+// Read the phantom `__entry` field by indexed access rather than inferring it
+// from the constrained `Contract<any, infer Entry, any>` position: when a
+// contract declares no errors its entry is `never`, and `infer` in a
+// constrained position falls back to the constraint (`ErrorEntry`), which would
+// otherwise poison the merged entry union and widen `code` to `string`.
+type EntryOf<C> = C extends { readonly __entry?: infer Entry } ? NonNullable<Entry> : never;
 
 type MergedEndpoints<T extends readonly Contract<any, any, any>[]> =
   UnionToIntersection<EndpointsOf<T[number]>> extends infer M
@@ -51,15 +55,16 @@ export interface CombineContractsOptions<
 }
 
 function mergeErrorMaps(maps: (ErrorMap | undefined)[]): ErrorMap | undefined {
-  const result: Record<number, TSchema> = {};
+  const result: ErrorMap = {};
   let has = false;
   for (const map of maps) {
     if (!map) continue;
-    for (const [statusStr, schema] of Object.entries(map)) {
+    for (const [code, def] of Object.entries(map)) {
+      if (code in result) {
+        throw new Error(`Duplicate error code "${code}" in combined contracts`);
+      }
+      result[code] = def;
       has = true;
-      const status = Number(statusStr);
-      const existing = result[status];
-      result[status] = existing ? T.Union([existing, schema]) : schema;
     }
   }
   return has ? result : undefined;

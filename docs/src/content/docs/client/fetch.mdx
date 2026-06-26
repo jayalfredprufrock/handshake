@@ -134,25 +134,28 @@ await api.listUsers({ request: { signal: controller.signal } });
 
 ## Errors
 
-Any non-OK response is thrown as an `ApiError` (`{ statusCode, body, response }`); network failures propagate as-is. Recognize and narrow contract errors with `contract.isError`:
+A handshake error response is thrown as an `ApiError`, which mirrors the wire envelope — `{ code, status, message, details }` — plus a client-only `response`. The server brands its envelope with `kind: "HANDSHAKE"`, so the client reconstructs the `ApiError` 1:1. Any **other** non-OK response (a proxy, gateway, or non-handshake backend) is thrown as an `HttpError` (`{ status, body, response }`) — never an `ApiError`. Network failures propagate as-is. Recognize and narrow contract errors with `contract.isError`:
 
 ```ts
 import { contract } from "./contract";
+import { HttpError } from "@jayalfredprufrock/handshake/client";
 
 try {
   await api.getUser({ id: "42" });
 } catch (err) {
   if (contract.isError(err)) {
-    switch (err.body.code) {
+    switch (err.code) {
       case "NOT_FOUND":
         return null;
     }
+  } else if (err instanceof HttpError) {
+    throw err; // non-handshake response (status/body available)
   } else {
     throw err; // network / unexpected
   }
 
   // or check a specific code
-  if (contract.isError(err, "CONFLICT")) err.body.conflictingId; // typed
+  if (contract.isError(err, "CONFLICT")) err.details.conflictingId; // typed
 }
 ```
 

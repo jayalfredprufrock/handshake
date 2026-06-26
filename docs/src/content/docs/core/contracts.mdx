@@ -71,7 +71,7 @@ headers: Type.Object({ "x-api-key": Type.String() });
 
 ## Errors
 
-Errors are declared once on the contract as a **status-keyed map**. Each error body is discriminated by a `code` literal, and errors are **contract-wide** (any endpoint may return any of them):
+Errors are declared once on the contract as a **code-keyed map**. Each `code` maps to its HTTP `status` and an optional `details` schema. Errors are **contract-wide** (any endpoint may return any of them):
 
 ```ts
 const contract = createContract(
@@ -79,28 +79,30 @@ const contract = createContract(
   { transfer: { method: "POST", path: "/transfer", body, response } },
   {
     errors: {
-      401: Type.Object({ code: Type.Literal("UNAUTHORIZED") }),
-      404: Type.Object({ code: Type.Literal("NOT_FOUND") }),
-      409: Type.Object({ code: Type.Literal("CONFLICT"), conflictingId: Type.String() }),
+      UNAUTHORIZED: { status: 401 },
+      NOT_FOUND: { status: 404 },
+      CONFLICT: { status: 409, details: Type.Object({ conflictingId: Type.String() }) },
     },
   },
 );
 ```
 
-Codes must be unique across statuses. The codes `VALIDATION_ERROR` and `UNKNOWN_ERROR` are **reserved** by the framework and throw if declared.
+Codes are unique by construction (map keys). The codes `VALIDATION_ERROR` and `UNKNOWN_ERROR` are **reserved** by the framework and throw if declared.
 
 The contract exposes two typed helpers:
 
-- **`contract.error("CODE", extra?)`** — builds an `ApiError` with the status inferred from the code; `throw` the result. Undeclared codes and missing/extra fields are compile errors.
-- **`contract.isError(err[, "CODE"])`** — a type guard that narrows a caught error to the contract's error union (or a specific code).
+- **`contract.error("CODE", message, details?)`** — builds an `ApiError`; `throw` the result. The `status` comes from the code's definition, the second argument is the `Error.message`, and the third is the code's `details` payload (required only when the code declares a `details` schema). Undeclared codes and bad details are compile errors.
+- **`contract.isError(err[, "CODE"])`** — a type guard that narrows a caught error to the contract's errors (or a specific code), discriminated by `err.code`.
 
 ```ts
-throw contract.error("CONFLICT", { conflictingId: dup.id }); // server → 409
+throw contract.error("CONFLICT", "duplicate transfer", { conflictingId: dup.id }); // server → 409
 
 if (contract.isError(err, "NOT_FOUND")) {
-  /* err.body: { code: "NOT_FOUND" } */
+  /* err.code === "NOT_FOUND", err.status === 404 */
 }
 ```
+
+On the wire, every error is a fixed envelope — `{ kind: "HANDSHAKE", code, status, message, details }`. The `kind` brand lets the client tell a handshake error apart from any other non-OK response. `ApiError` mirrors that envelope exactly (`{ code, status, message, details }`, plus a client-only `response`), so the client reconstructs it 1:1. A non-handshake error response (a proxy, gateway, or non-handshake backend) is surfaced as an [`HttpError`](/handshake/client/fetch/#errors) instead — never an `ApiError`.
 
 See [Error handling](/handshake/server/hono/#error-handling) for how the server surfaces them and [the client guide](/handshake/client/fetch/#errors) for catching them.
 

@@ -87,7 +87,7 @@ let nextId = 1;
 const module = implementContract(contract, {
   getUser: ({ params }) => {
     const user = users.get(params.id);
-    if (!user) throw contract.error("NOT_FOUND"); // requires a NOT_FOUND error in the contract
+    if (!user) throw contract.error("NOT_FOUND", "user not found"); // requires a NOT_FOUND error in the contract
     return user;
   },
   listUsers: () => [...users.values()],

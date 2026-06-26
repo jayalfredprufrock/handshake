@@ -91,22 +91,36 @@ describe("combineContracts", () => {
     const a = createContract(
       "/a",
       { one: { method: "GET", path: "/", response: T.Null() } },
-      { errors: { 404: T.Object({ code: T.Literal("NOT_FOUND") }) } },
+      { errors: { NOT_FOUND: { status: 404 } } },
     );
     const b = createContract(
       "/b",
       { two: { method: "GET", path: "/", response: T.Null() } },
-      { errors: { 409: T.Object({ code: T.Literal("CONFLICT"), conflictingId: T.String() }) } },
+      { errors: { CONFLICT: { status: 409, details: T.Object({ conflictingId: T.String() }) } } },
     );
 
     const combined = combineContracts([a, b], {
-      errors: { 401: T.Object({ code: T.Literal("UNAUTHORIZED") }) },
+      errors: { UNAUTHORIZED: { status: 401 } },
     });
 
-    expect(combined.error("NOT_FOUND")).toBeInstanceOf(ApiError);
-    expect(combined.error("NOT_FOUND").statusCode).toBe(404);
-    expect(combined.error("CONFLICT", { conflictingId: "1" }).statusCode).toBe(409);
-    expect(combined.error("UNAUTHORIZED").statusCode).toBe(401);
+    expect(combined.error("NOT_FOUND", "not found")).toBeInstanceOf(ApiError);
+    expect(combined.error("NOT_FOUND", "not found").status).toBe(404);
+    expect(combined.error("CONFLICT", "conflict", { conflictingId: "1" }).status).toBe(409);
+    expect(combined.error("UNAUTHORIZED", "unauthorized").status).toBe(401);
+  });
+
+  test("throws on duplicate error codes across combined contracts", () => {
+    const a = createContract(
+      "/a",
+      { one: { method: "GET", path: "/", response: T.Null() } },
+      { errors: { CONFLICT: { status: 409 } } },
+    );
+    const b = createContract(
+      "/b",
+      { two: { method: "GET", path: "/", response: T.Null() } },
+      { errors: { CONFLICT: { status: 409 } } },
+    );
+    expect(() => combineContracts([a, b])).toThrow(/Duplicate error code "CONFLICT"/);
   });
 
   describe("type inference", () => {
@@ -145,22 +159,38 @@ describe("combineContracts", () => {
       const a = createContract(
         "/a",
         { one: { method: "GET", path: "/", response: T.Null() } },
-        { errors: { 404: T.Object({ code: T.Literal("NOT_FOUND") }) } },
+        { errors: { NOT_FOUND: { status: 404 } } },
       );
       const b = createContract(
         "/b",
         { two: { method: "GET", path: "/", response: T.Null() } },
-        { errors: { 409: T.Object({ code: T.Literal("CONFLICT"), conflictingId: T.String() }) } },
+        { errors: { CONFLICT: { status: 409, details: T.Object({ conflictingId: T.String() }) } } },
       );
 
       const combined = combineContracts([a, b]);
-      const err: unknown = combined.error("CONFLICT", { conflictingId: "1" });
+      const err: unknown = combined.error("CONFLICT", "conflict", { conflictingId: "1" });
 
       if (combined.isError(err)) {
-        expectTypeOf(err.body).toEqualTypeOf<
-          { code: "NOT_FOUND" } | { code: "CONFLICT"; conflictingId: string }
-        >();
+        expectTypeOf(err.code).toEqualTypeOf<"NOT_FOUND" | "CONFLICT">();
+        if (err.code === "CONFLICT") {
+          expectTypeOf(err.details).toEqualTypeOf<{ conflictingId: string }>();
+        }
       }
+    });
+
+    test("error() constrains codes when errors come only from combine-level options", () => {
+      // Regression: sub-contracts (users, posts) declare no errors, so their
+      // entry is `never`. EntryOf must not widen that `never` to `ErrorEntry`,
+      // which previously collapsed the code union to `string` and let any code
+      // through.
+      const combined = combineContracts([users, posts], {
+        errors: { UNAUTHORIZED: { status: 401 } },
+      });
+
+      expect(combined.error("UNAUTHORIZED", "unauthorized").status).toBe(401);
+      expectTypeOf(combined.error).parameter(0).toEqualTypeOf<"UNAUTHORIZED">();
+      // @ts-expect-error — undeclared code must be rejected at the type level
+      expect(() => combined.error("NOT_A_REAL_CODE", "msg")).toThrow(/Unknown error code/);
     });
   });
 });

@@ -1,5 +1,5 @@
 import type { Contract, Endpoint, ErrorMap, InferSchema } from "../../contract";
-import { ApiError, joinPath } from "../../contract";
+import { ApiError, errorEnvelope, joinPath } from "../../contract";
 import {
   AssertError,
   type BaseHandlerInput,
@@ -12,6 +12,7 @@ import {
   parseResponse,
 } from "../../server";
 import { Hono } from "hono";
+import { HTTPException } from "hono/http-exception";
 import type { Context, Env, MiddlewareHandler } from "hono";
 
 type HandlerInput<E extends Endpoint, HonoEnv extends Env> = BaseHandlerInput<E> & {
@@ -123,9 +124,9 @@ function buildModule(
       hono.on(endpoint.method, [endpoint.path], ...allMw, async (c: Context) => {
         const input: Record<string, unknown> = { c };
 
-        // All framework errors share the contract's `{ code }` envelope.
+        // All framework errors share the contract's error envelope.
         const validationError = (issues: unknown) =>
-          c.json({ code: "VALIDATION_ERROR", issues }, 400);
+          c.json(errorEnvelope("VALIDATION_ERROR", 400, "Validation failed", { issues }), 400);
 
         if (endpoint.params) {
           try {
@@ -182,19 +183,25 @@ function buildModule(
           result = await handler(input as any);
         } catch (err) {
           if (!(err instanceof ApiError)) throw err;
+          const emit = (details: unknown) =>
+            c.json(
+              errorEnvelope(err.code, err.status, err.message, details) as any,
+              err.status as any,
+            );
           if (!shouldValidate) {
-            return c.json(err.body as any, err.statusCode as any);
+            return emit(err.details);
           }
-          const schema = errors?.[err.statusCode];
-          if (schema) {
+          const def = errors?.[err.code];
+          if (!def) throw err; // undeclared code → routes through onError
+          if (def.details) {
             try {
-              return c.json(parseResponse(schema, err.body) as any, err.statusCode as any);
+              return emit(parseResponse(def.details, err.details));
             } catch (validationError) {
               if (validationError instanceof AssertError) throw err;
               throw validationError;
             }
           }
-          throw err;
+          return emit(err.details);
         }
 
         if (result instanceof Response) {
@@ -317,15 +324,27 @@ export function createHonoApp<HonoEnv extends Env = Env>(
         const mapped = await onError(err, c);
         // Only an ApiError can shape the response; anything else falls through.
         if (mapped instanceof ApiError) {
-          return c.json(mapped.body as any, mapped.statusCode as any);
+          return c.json(
+            errorEnvelope(mapped.code, mapped.status, mapped.message, mapped.details) as any,
+            mapped.status as any,
+          );
         }
       } catch (hookError) {
         console.error(hookError);
       }
     }
-    // Unhandled error — log (matching Hono's default) and emit the contract envelope.
+    // Preserve Hono's own error handling: an HTTPException (from the framework or
+    // middleware such as bearer auth) keeps its status and response instead of
+    // collapsing into UNKNOWN_ERROR. The client surfaces it as a non-handshake
+    // HttpError. Installing this onError otherwise replaces Hono's default, which
+    // would turn an expected 401/403/404 into a 500.
+    if (err instanceof HTTPException) {
+      return err.getResponse();
+    }
+    // Genuinely unexpected error — log (matching Hono's default) and emit the
+    // contract's UNKNOWN_ERROR envelope without leaking the cause.
     console.error(err);
-    return c.json({ code: "UNKNOWN_ERROR" }, 500);
+    return c.json(errorEnvelope("UNKNOWN_ERROR", 500, "Unknown error", undefined), 500);
   });
 
   const middlewareFactories = options?.middleware

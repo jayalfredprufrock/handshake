@@ -1,7 +1,7 @@
 import { describe, expect, expectTypeOf, test, vi } from "vite-plus/test";
 import * as T from "typebox";
-import { ApiError, createContract } from "../contract";
-import { createFetchClient } from "../client";
+import { ApiError, createContract, errorEnvelope } from "../contract";
+import { createFetchClient, HttpError } from "../client";
 
 const json = (status: number, body?: unknown, headers: Record<string, string> = {}) =>
   new Response(body === undefined ? null : JSON.stringify(body), {
@@ -123,13 +123,38 @@ describe("createFetchClient request/response pipeline", () => {
     await expect(client.getUser({ id: "1" })).resolves.toEqual({ id: "1" });
   });
 
-  test("throws ApiError carrying status, body and response on a non-OK response", async () => {
-    const fetch = vi.fn(async () => json(404, { code: "NOT_FOUND" }));
+  test("reconstructs an ApiError from a handshake error envelope", async () => {
+    const fetch = vi.fn(async () =>
+      json(404, errorEnvelope("NOT_FOUND", 404, "user 5 not found", undefined)),
+    );
     const client = createFetchClient(getUserContract, { fetch, baseUrl: "https://x.com" });
     const err = await client.getUser({ id: "1" }).catch((e) => e);
     expect(err).toBeInstanceOf(ApiError);
-    expect(err.statusCode).toBe(404);
-    expect(err.body).toEqual({ code: "NOT_FOUND" });
+    expect(err.code).toBe("NOT_FOUND");
+    expect(err.status).toBe(404);
+    expect(err.message).toBe("user 5 not found");
+    expect(err.response).toBeInstanceOf(Response);
+  });
+
+  test("reconstructs the details payload from the envelope", async () => {
+    const fetch = vi.fn(async () =>
+      json(409, errorEnvelope("CONFLICT", 409, "duplicate", { conflictingId: "7" })),
+    );
+    const client = createFetchClient(getUserContract, { fetch, baseUrl: "https://x.com" });
+    const err = await client.getUser({ id: "1" }).catch((e) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect(err.code).toBe("CONFLICT");
+    expect(err.details).toEqual({ conflictingId: "7" });
+  });
+
+  test("throws HttpError for a non-envelope (non-handshake) error response", async () => {
+    const fetch = vi.fn(async () => json(502, { error: "bad gateway" }));
+    const client = createFetchClient(getUserContract, { fetch, baseUrl: "https://x.com" });
+    const err = await client.getUser({ id: "1" }).catch((e) => e);
+    expect(err).toBeInstanceOf(HttpError);
+    expect(err).not.toBeInstanceOf(ApiError);
+    expect(err.status).toBe(502);
+    expect(err.body).toEqual({ error: "bad gateway" });
     expect(err.response).toBeInstanceOf(Response);
   });
 
@@ -214,12 +239,12 @@ describe("createFetchClient hooks", () => {
   test("retry recovers from a typed error via contract.isError", async () => {
     const contract = createContract(
       { me: { method: "GET", path: "/me", response: T.Object({ id: T.String() }) } },
-      { errors: { 401: T.Object({ code: T.Literal("TOKEN_EXPIRED") }) } },
+      { errors: { TOKEN_EXPIRED: { status: 401 } } },
     );
     const refresh = vi.fn(async () => {});
     const fetch = vi
       .fn()
-      .mockResolvedValueOnce(json(401, { code: "TOKEN_EXPIRED" }))
+      .mockResolvedValueOnce(json(401, errorEnvelope("TOKEN_EXPIRED", 401, "expired", undefined)))
       .mockResolvedValueOnce(json(200, { id: "1" }));
     const client = createFetchClient(contract, {
       fetch,

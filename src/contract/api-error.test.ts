@@ -1,30 +1,52 @@
 import { describe, expect, test } from "vite-plus/test";
-import { ApiError } from "./api-error";
+import { ApiError, errorEnvelope, isErrorEnvelope } from "./api-error";
 
 describe("ApiError", () => {
-  test("extends Error and sets message to code", () => {
-    const err = new ApiError(404, { code: "NOT_FOUND" });
+  test("mirrors the envelope; message falls back to the code", () => {
+    const err = new ApiError({ code: "NOT_FOUND", status: 404 });
     expect(err).toBeInstanceOf(Error);
     expect(err).toBeInstanceOf(ApiError);
     expect(err.name).toBe("ApiError");
     expect(err.message).toBe("NOT_FOUND");
-    expect(err.statusCode).toBe(404);
-    expect(err.body).toEqual({ code: "NOT_FOUND" });
+    expect(err.code).toBe("NOT_FOUND");
+    expect(err.status).toBe(404);
+    expect(err.details).toBeUndefined();
   });
 
-  test("falls back to an HTTP message when the body has no code", () => {
-    const err = new ApiError(500, { error: "boom" });
-    expect(err.message).toBe("HTTP 500");
-  });
-
-  test("preserves extra body fields", () => {
-    const err = new ApiError(409, { code: "CONFLICT", conflictingId: "42" });
-    expect((err.body as { conflictingId: string }).conflictingId).toBe("42");
+  test("uses an explicit message and carries details", () => {
+    const err = new ApiError({
+      code: "CONFLICT",
+      status: 409,
+      message: "duplicate transfer",
+      details: { conflictingId: "42" },
+    });
+    expect(err.message).toBe("duplicate transfer");
+    expect(err.details).toEqual({ conflictingId: "42" });
   });
 
   test("carries the originating response when provided", () => {
     const response = new Response(null, { status: 404 });
-    const err = new ApiError(404, { code: "NOT_FOUND" }, response);
+    const err = new ApiError({ code: "NOT_FOUND", status: 404, response });
     expect(err.response).toBe(response);
+  });
+});
+
+describe("error envelope", () => {
+  test("errorEnvelope stamps the HANDSHAKE brand", () => {
+    expect(errorEnvelope("NOT_FOUND", 404, "not found", undefined)).toEqual({
+      kind: "HANDSHAKE",
+      code: "NOT_FOUND",
+      status: 404,
+      message: "not found",
+      details: undefined,
+    });
+  });
+
+  test("isErrorEnvelope detects the brand", () => {
+    expect(isErrorEnvelope(errorEnvelope("X", 400, "m", undefined))).toBe(true);
+    expect(isErrorEnvelope({ code: "X", status: 400, message: "m" })).toBe(false); // no brand
+    expect(isErrorEnvelope({ error: "nope" })).toBe(false);
+    expect(isErrorEnvelope("string")).toBe(false);
+    expect(isErrorEnvelope(null)).toBe(false);
   });
 });

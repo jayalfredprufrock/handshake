@@ -1,5 +1,6 @@
 import { describe, expect, test, vi } from "vite-plus/test";
 import * as T from "typebox";
+import { HTTPException } from "hono/http-exception";
 import { createContract, combineContracts, ApiError } from "../../contract";
 import { ResponseValidationError } from "../../server";
 import { implementContract, createHonoApp } from "./index";
@@ -15,19 +16,24 @@ describe("error handling", () => {
           response: T.Object({ id: T.String() }),
         },
       },
-      { errors: { 404: T.Object({ code: T.Literal("NOT_FOUND") }) } },
+      { errors: { NOT_FOUND: { status: 404 } } },
     );
 
     const module = implementContract(contract, {
       getUser: () => {
-        throw contract.error("NOT_FOUND");
+        throw contract.error("NOT_FOUND", "user not found");
       },
     });
     const app = createHonoApp([module]);
 
     const res = await app.request("/users/1");
     expect(res.status).toBe(404);
-    expect(await res.json()).toEqual({ code: "NOT_FOUND" });
+    expect(await res.json()).toEqual({
+      kind: "HANDSHAKE",
+      code: "NOT_FOUND",
+      status: 404,
+      message: "user not found",
+    });
   });
 
   test("ApiError pass-through for a manually thrown declared error", async () => {
@@ -40,19 +46,24 @@ describe("error handling", () => {
           response: T.Object({ id: T.String() }),
         },
       },
-      { errors: { 401: T.Object({ code: T.Literal("UNAUTHORIZED") }) } },
+      { errors: { UNAUTHORIZED: { status: 401 } } },
     );
 
     const module = implementContract(contract, {
       getUser: () => {
-        throw new ApiError(401, { code: "UNAUTHORIZED" });
+        throw new ApiError({ code: "UNAUTHORIZED", status: 401, message: "missing token" });
       },
     });
     const app = createHonoApp([module]);
 
     const res = await app.request("/users/1");
     expect(res.status).toBe(401);
-    expect(await res.json()).toEqual({ code: "UNAUTHORIZED" });
+    expect(await res.json()).toEqual({
+      kind: "HANDSHAKE",
+      code: "UNAUTHORIZED",
+      status: 401,
+      message: "missing token",
+    });
   });
 
   test("ApiError pass-through with multiple declared statuses", async () => {
@@ -65,24 +76,24 @@ describe("error handling", () => {
           response: T.Object({ id: T.String() }),
         },
       },
-      {
-        errors: {
-          401: T.Object({ code: T.Literal("UNAUTHORIZED") }),
-          404: T.Object({ code: T.Literal("NOT_FOUND") }),
-        },
-      },
+      { errors: { UNAUTHORIZED: { status: 401 }, NOT_FOUND: { status: 404 } } },
     );
 
     const module = implementContract(contract, {
       getUser: () => {
-        throw contract.error("NOT_FOUND");
+        throw contract.error("NOT_FOUND", "user not found");
       },
     });
     const app = createHonoApp([module]);
 
     const res = await app.request("/users/1");
     expect(res.status).toBe(404);
-    expect(await res.json()).toEqual({ code: "NOT_FOUND" });
+    expect(await res.json()).toEqual({
+      kind: "HANDSHAKE",
+      code: "NOT_FOUND",
+      status: 404,
+      message: "user not found",
+    });
   });
 
   test("foreign error routes through onError", async () => {
@@ -95,7 +106,7 @@ describe("error handling", () => {
           response: T.Object({ id: T.String() }),
         },
       },
-      { errors: { 500: T.Object({ code: T.Literal("INTERNAL_ERROR") }) } },
+      { errors: { INTERNAL_ERROR: { status: 500 } } },
     );
 
     const module = implementContract(contract, {
@@ -104,12 +115,18 @@ describe("error handling", () => {
       },
     });
     const app = createHonoApp([module], {
-      onError: () => new ApiError(500, { code: "INTERNAL_ERROR" }),
+      onError: () =>
+        new ApiError({ code: "INTERNAL_ERROR", status: 500, message: "internal error" }),
     });
 
     const res = await app.request("/users/1");
     expect(res.status).toBe(500);
-    expect(await res.json()).toEqual({ code: "INTERNAL_ERROR" });
+    expect(await res.json()).toEqual({
+      kind: "HANDSHAKE",
+      code: "INTERNAL_ERROR",
+      status: 500,
+      message: "internal error",
+    });
   });
 
   test("ApiError thrown with an undeclared status routes through onError", async () => {
@@ -122,26 +139,27 @@ describe("error handling", () => {
           response: T.Object({ id: T.String() }),
         },
       },
-      {
-        errors: {
-          404: T.Object({ code: T.Literal("NOT_FOUND") }),
-          500: T.Object({ code: T.Literal("INTERNAL_ERROR") }),
-        },
-      },
+      { errors: { NOT_FOUND: { status: 404 }, INTERNAL_ERROR: { status: 500 } } },
     );
 
     const module = implementContract(contract, {
       getUser: () => {
-        throw new ApiError(403, { code: "FORBIDDEN" });
+        throw new ApiError({ code: "FORBIDDEN", status: 403 });
       },
     });
     const app = createHonoApp([module], {
-      onError: () => new ApiError(500, { code: "INTERNAL_ERROR" }),
+      onError: () =>
+        new ApiError({ code: "INTERNAL_ERROR", status: 500, message: "internal error" }),
     });
 
     const res = await app.request("/users/1");
     expect(res.status).toBe(500);
-    expect(await res.json()).toEqual({ code: "INTERNAL_ERROR" });
+    expect(await res.json()).toEqual({
+      kind: "HANDSHAKE",
+      code: "INTERNAL_ERROR",
+      status: 500,
+      message: "internal error",
+    });
   });
 
   test("unhandled error defaults to 500 UNKNOWN_ERROR when no onError", async () => {
@@ -164,7 +182,12 @@ describe("error handling", () => {
 
     const res = await app.request("/users/1");
     expect(res.status).toBe(500);
-    expect(await res.json()).toEqual({ code: "UNKNOWN_ERROR" });
+    expect(await res.json()).toEqual({
+      kind: "HANDSHAKE",
+      code: "UNKNOWN_ERROR",
+      status: 500,
+      message: "Unknown error",
+    });
     expect(errorSpy).toHaveBeenCalled();
     errorSpy.mockRestore();
   });
@@ -189,8 +212,67 @@ describe("error handling", () => {
 
     const res = await app.request("/users/1");
     expect(res.status).toBe(500);
-    expect(await res.json()).toEqual({ code: "UNKNOWN_ERROR" });
+    expect(await res.json()).toEqual({
+      kind: "HANDSHAKE",
+      code: "UNKNOWN_ERROR",
+      status: 500,
+      message: "Unknown error",
+    });
     errorSpy.mockRestore();
+  });
+
+  test("a Hono HTTPException keeps its status instead of becoming UNKNOWN_ERROR", async () => {
+    const contract = createContract({
+      getUser: {
+        method: "GET",
+        path: "/users/:id",
+        params: T.Object({ id: T.String() }),
+        response: T.Object({ id: T.String() }),
+      },
+    });
+    // e.g. a middleware (bearer auth) or the framework throwing an HTTPException
+    const module = implementContract(contract, {
+      getUser: () => {
+        throw new HTTPException(401, { message: "no token" });
+      },
+    });
+    const app = createHonoApp([module]);
+
+    const res = await app.request("/users/1");
+    expect(res.status).toBe(401); // not collapsed to 500
+    expect(await res.text()).toBe("no token");
+  });
+
+  test("onError can still convert an HTTPException to a typed ApiError", async () => {
+    const contract = createContract(
+      {
+        getUser: {
+          method: "GET",
+          path: "/users/:id",
+          params: T.Object({ id: T.String() }),
+          response: T.Object({ id: T.String() }),
+        },
+      },
+      { errors: { UNAUTHORIZED: { status: 401 } } },
+    );
+    const module = implementContract(contract, {
+      getUser: () => {
+        throw new HTTPException(401, { message: "no token" });
+      },
+    });
+    const app = createHonoApp([module], {
+      onError: (err) =>
+        err instanceof HTTPException ? contract.error("UNAUTHORIZED", err.message) : undefined,
+    });
+
+    const res = await app.request("/users/1");
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({
+      kind: "HANDSHAKE",
+      code: "UNAUTHORIZED",
+      status: 401,
+      message: "no token",
+    });
   });
 
   test("request validation errors use the VALIDATION_ERROR envelope", async () => {
@@ -211,9 +293,16 @@ describe("error handling", () => {
       headers: { "content-type": "application/json" },
     });
     expect(res.status).toBe(400);
-    const body = (await res.json()) as { code: string; issues: unknown };
+    const body = (await res.json()) as {
+      kind: string;
+      code: string;
+      status: number;
+      details: { issues: unknown };
+    };
+    expect(body.kind).toBe("HANDSHAKE");
     expect(body.code).toBe("VALIDATION_ERROR");
-    expect(body.issues).toBeDefined();
+    expect(body.status).toBe(400);
+    expect(body.details.issues).toBeDefined();
   });
 
   test("a bad response surfaces as UNKNOWN_ERROR but onError can detect why", async () => {
@@ -243,7 +332,12 @@ describe("error handling", () => {
 
     const res = await app.request("/users/1");
     expect(res.status).toBe(500);
-    expect(await res.json()).toEqual({ code: "UNKNOWN_ERROR" }); // client never learns why
+    expect(await res.json()).toEqual({
+      kind: "HANDSHAKE",
+      code: "UNKNOWN_ERROR",
+      status: 500,
+      message: "Unknown error",
+    }); // client never learns why
     expect(seenIssues).toBeDefined(); // server can
     errorSpy.mockRestore();
   });
@@ -259,11 +353,11 @@ describe("error handling", () => {
           response: T.Object({ id: T.String() }),
         },
       },
-      { errors: { 404: T.Object({ code: T.Literal("NOT_FOUND") }) } },
+      { errors: { NOT_FOUND: { status: 404 } } },
     );
 
     const combined = combineContracts([users], {
-      errors: { 500: T.Object({ code: T.Literal("INTERNAL_ERROR") }) },
+      errors: { INTERNAL_ERROR: { status: 500 } },
     });
 
     const module = implementContract(combined, {
@@ -272,12 +366,17 @@ describe("error handling", () => {
       },
     });
     const app = createHonoApp([module], {
-      onError: () => new ApiError(500, { code: "INTERNAL_ERROR" }),
+      onError: () => new ApiError({ code: "INTERNAL_ERROR", status: 500 }),
     });
 
     const res = await app.request("/users/1");
     expect(res.status).toBe(500);
-    expect(await res.json()).toEqual({ code: "INTERNAL_ERROR" });
+    expect(await res.json()).toEqual({
+      kind: "HANDSHAKE",
+      code: "INTERNAL_ERROR",
+      status: 500,
+      message: "INTERNAL_ERROR",
+    });
   });
 
   test("onError works with named group combined contracts", async () => {
@@ -293,7 +392,7 @@ describe("error handling", () => {
     const combined = combineContracts(
       { users },
       {
-        errors: { 500: T.Object({ code: T.Literal("INTERNAL_ERROR") }) },
+        errors: { INTERNAL_ERROR: { status: 500 } },
       },
     );
 
@@ -303,12 +402,17 @@ describe("error handling", () => {
       },
     });
     const app = createHonoApp([module], {
-      onError: () => new ApiError(500, { code: "INTERNAL_ERROR" }),
+      onError: () => new ApiError({ code: "INTERNAL_ERROR", status: 500 }),
     });
 
     const res = await app.request("/users/1");
     expect(res.status).toBe(500);
-    expect(await res.json()).toEqual({ code: "INTERNAL_ERROR" });
+    expect(await res.json()).toEqual({
+      kind: "HANDSHAKE",
+      code: "INTERNAL_ERROR",
+      status: 500,
+      message: "INTERNAL_ERROR",
+    });
   });
 
   test("uses responseCode for the success status (default 200)", async () => {

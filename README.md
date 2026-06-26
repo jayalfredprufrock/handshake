@@ -71,7 +71,7 @@ let nextId = 1;
 const module = implementContract(contract, {
   getUser: ({ params }) => {
     const user = users.get(params.id);
-    if (!user) throw contract.error("NOT_FOUND"); // see "Errors" below
+    if (!user) throw contract.error("NOT_FOUND", "user not found"); // see "Errors" below
     return user;
   },
   listUsers: () => [...users.values()],
@@ -129,7 +129,7 @@ Method signatures adapt to the endpoint: endpoints with path params take a param
 
 ## Errors
 
-Errors are declared once on the contract as a **status-keyed map**, where each error body is discriminated by a `code` literal:
+Errors are declared once on the contract as a **code-keyed map**, where each `code` maps to its HTTP `status` and an optional `details` schema:
 
 ```ts
 import { Type } from "typebox";
@@ -148,38 +148,38 @@ export const contract = createContract(
   },
   {
     errors: {
-      401: Type.Object({ code: Type.Literal("UNAUTHORIZED") }),
-      404: Type.Object({ code: Type.Literal("NOT_FOUND") }),
-      409: Type.Object({ code: Type.Literal("CONFLICT"), conflictingId: Type.String() }),
+      UNAUTHORIZED: { status: 401 },
+      NOT_FOUND: { status: 404 },
+      CONFLICT: { status: 409, details: Type.Object({ conflictingId: Type.String() }) },
     },
   },
 );
 ```
 
-Errors are **contract-wide** — any endpoint may return any declared error. Codes must be unique across statuses.
+Errors are **contract-wide** — any endpoint may return any declared error. Codes are unique by construction (map keys).
 
 ### Raising errors (server)
 
-The contract exposes a typed `error` factory that infers the status from the code — just `throw` the result:
+The contract exposes a typed `error` factory. The status comes from the code's definition; the second argument is the `Error.message`; the third is the code's `details` payload (required only when the code declares a `details` schema). Then just `throw` the result:
 
 ```ts
 getUser: ({ params }) => {
   const user = db.find(params.id);
-  if (!user) throw contract.error("NOT_FOUND"); // → 404
+  if (!user) throw contract.error("NOT_FOUND", `no user ${params.id}`); // → 404
   return user;
 },
 transfer: ({ body }) => {
   const dup = db.findTransfer(body.idempotencyKey);
-  if (dup) throw contract.error("CONFLICT", { conflictingId: dup.id }); // → 409, typed extra fields
+  if (dup) throw contract.error("CONFLICT", "duplicate transfer", { conflictingId: dup.id }); // → 409
   return db.transfer(body);
 },
 ```
 
-Undeclared codes and missing/extra fields are compile errors. You can also `throw new ApiError(status, body)` directly for one-off cases.
+`ApiError` mirrors the wire envelope exactly — `{ code, status, message, details }` (plus a client-only `response`) — and the client reconstructs the same `ApiError` from the response. Undeclared codes and bad details are compile errors. You can also `throw new ApiError({ code, status, message, details })` directly for one-off cases.
 
 ### Handling errors (client)
 
-Any non-OK response is thrown as an `ApiError`; network failures propagate as-is. Recognize and narrow contract errors with `contract.isError` (the contract is reachable from the client as `client.$contract`):
+A handshake error response is thrown as an `ApiError`; a non-handshake error response (proxy, gateway, foreign backend) is thrown as an [`HttpError`](#handling-errors-client); network failures propagate as-is. Recognize and narrow contract errors with `contract.isError` (the contract is reachable from the client as `client.$contract`):
 
 ```ts
 import { contract } from "./contract";
@@ -188,28 +188,27 @@ try {
   await api.getUser({ id: "42" });
 } catch (err) {
   if (contract.isError(err)) {
-    // err.body is the contract's error union; narrow with your own discriminator
-    switch (err.body.code) {
+    switch (err.code) {
       case "NOT_FOUND":
         return null;
       case "UNAUTHORIZED":
         return login();
     }
   }
-  throw err; // network / unexpected
+  throw err; // HttpError / network / unexpected
 }
 
 // or check a specific code directly
 if (contract.isError(err, "CONFLICT")) {
-  err.body.conflictingId; // typed
+  err.details.conflictingId; // typed
 }
 ```
 
-`code` is just a convention for _your_ errors — narrow on whatever discriminator your schemas use (`kind`, `type`, …). The library never forces it.
+`ApiError` is reserved for handshake errors. Anything else non-OK is an `HttpError` (`{ status, body, response }`), so `contract.isError(err)` is `false` for it and it falls through to your unexpected-error branch.
 
 ### Error handling
 
-Every error the server emits — declared or not — is an `ApiError` with a `{ code }` body, so clients handle them uniformly. Two codes are **reserved** by the framework and cannot be declared in a contract:
+Every error the server emits — declared or not — is a handshake error envelope, so clients reconstruct them uniformly as `ApiError`. Two codes are **reserved** by the framework and cannot be declared in a contract:
 
 - **`VALIDATION_ERROR`** (400) — a request failed schema validation; the body includes `issues`.
 - **`UNKNOWN_ERROR`** (500) — an unexpected error, or a handler response that failed validation. The cause is **never leaked** to the client and is logged on the server.
@@ -224,7 +223,8 @@ const app = createHonoApp([module], {
   onError: (err, c) => {
     // take special action on a known internal error — client still gets UNKNOWN_ERROR
     if (err instanceof ResponseValidationError) alert("contract drift", err.issues);
-    if (err instanceof PaymentGatewayError) return contract.error("UNAUTHORIZED");
+    if (err instanceof PaymentGatewayError)
+      return contract.error("UNAUTHORIZED", "gateway rejected");
     // return nothing → UNKNOWN_ERROR (logged)
   },
 });

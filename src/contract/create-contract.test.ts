@@ -4,9 +4,9 @@ import { ApiError } from "./api-error";
 import { createContract } from "./create-contract";
 
 const errors = {
-  401: T.Object({ code: T.Literal("UNAUTHORIZED") }),
-  404: T.Object({ code: T.Literal("NOT_FOUND") }),
-  409: T.Object({ code: T.Literal("CONFLICT"), conflictingId: T.String() }),
+  UNAUTHORIZED: { status: 401 },
+  NOT_FOUND: { status: 404 },
+  CONFLICT: { status: 409, details: T.Object({ conflictingId: T.String() }) },
 };
 
 describe("createContract", () => {
@@ -64,29 +64,15 @@ describe("createContract", () => {
     expect(() =>
       createContract(
         { ping: { method: "GET", path: "/", response: T.Null() } },
-        { errors: { 400: T.Object({ code: T.Literal("VALIDATION_ERROR") }) } },
+        { errors: { VALIDATION_ERROR: { status: 400 } } },
       ),
     ).toThrow(/reserved/);
     expect(() =>
       createContract(
         { ping: { method: "GET", path: "/", response: T.Null() } },
-        { errors: { 500: T.Object({ code: T.Literal("UNKNOWN_ERROR") }) } },
+        { errors: { UNKNOWN_ERROR: { status: 500 } } },
       ),
     ).toThrow(/reserved/);
-  });
-
-  test("throws when error codes collide across statuses", () => {
-    expect(() =>
-      createContract(
-        { ping: { method: "GET", path: "/", response: T.Null() } },
-        {
-          errors: {
-            400: T.Object({ code: T.Literal("BAD") }),
-            422: T.Object({ code: T.Literal("BAD") }),
-          },
-        },
-      ),
-    ).toThrow(/Duplicate error code "BAD"/);
   });
 });
 
@@ -96,26 +82,29 @@ describe("contract.error", () => {
     { errors },
   );
 
-  test("infers the status from the code", () => {
-    const err = contract.error("NOT_FOUND");
+  test("takes the status from the code's definition", () => {
+    const err = contract.error("NOT_FOUND", "user not found");
     expect(err).toBeInstanceOf(ApiError);
-    expect(err.statusCode).toBe(404);
-    expect(err.body).toEqual({ code: "NOT_FOUND" });
+    expect(err.code).toBe("NOT_FOUND");
+    expect(err.status).toBe(404);
+    expect(err.message).toBe("user not found");
+    expect(err.details).toBeUndefined(); // NOT_FOUND declares no details
   });
 
-  test("includes typed extra fields", () => {
-    const err = contract.error("CONFLICT", { conflictingId: "7" });
-    expect(err.statusCode).toBe(409);
-    expect(err.body).toEqual({ code: "CONFLICT", conflictingId: "7" });
+  test("carries the typed details payload", () => {
+    const err = contract.error("CONFLICT", "id conflict", { conflictingId: "7" });
+    expect(err.code).toBe("CONFLICT");
+    expect(err.status).toBe(409);
+    expect(err.details).toEqual({ conflictingId: "7" });
   });
 
-  test("rejects undeclared codes and bad fields at compile time", () => {
+  test("rejects undeclared codes and bad details at compile time", () => {
     // type-only assertions; never executed
     void (() => {
       // @ts-expect-error "NOPE" is not a declared error code
-      contract.error("NOPE");
-      // @ts-expect-error CONFLICT requires conflictingId
-      contract.error("CONFLICT");
+      contract.error("NOPE", "msg");
+      // @ts-expect-error CONFLICT requires a details payload
+      contract.error("CONFLICT", "msg");
     });
   });
 });
@@ -127,25 +116,25 @@ describe("contract.isError", () => {
   );
 
   test("recognizes ApiError and narrows by code", () => {
-    const err: unknown = contract.error("CONFLICT", { conflictingId: "7" });
+    const err: unknown = contract.error("CONFLICT", "id conflict", { conflictingId: "7" });
     expect(contract.isError(err)).toBe(true);
     expect(contract.isError(new Error("x"))).toBe(false);
     expect(contract.isError(err, "CONFLICT")).toBe(true);
     expect(contract.isError(err, "NOT_FOUND")).toBe(false);
 
     if (contract.isError(err, "CONFLICT")) {
-      expectTypeOf(err.body).toEqualTypeOf<{ code: "CONFLICT"; conflictingId: string }>();
+      expectTypeOf(err.code).toEqualTypeOf<"CONFLICT">();
+      expectTypeOf(err.details).toEqualTypeOf<{ conflictingId: string }>();
     }
   });
 
-  test("bare guard narrows the body to the contract error union", () => {
-    const err: unknown = contract.error("NOT_FOUND");
+  test("bare guard narrows the error to the contract's code union", () => {
+    const err: unknown = contract.error("NOT_FOUND", "not found");
     if (contract.isError(err)) {
-      expectTypeOf(err.body).toEqualTypeOf<
-        | { code: "UNAUTHORIZED" }
-        | { code: "NOT_FOUND" }
-        | { code: "CONFLICT"; conflictingId: string }
-      >();
+      expectTypeOf(err.code).toEqualTypeOf<"UNAUTHORIZED" | "NOT_FOUND" | "CONFLICT">();
+      if (err.code === "CONFLICT") {
+        expectTypeOf(err.details).toEqualTypeOf<{ conflictingId: string }>();
+      }
     }
   });
 });

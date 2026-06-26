@@ -1,6 +1,7 @@
 import type { TSchema } from "typebox";
 import type { Contract, Endpoint, InferSchema } from "../contract";
-import { ApiError } from "../contract";
+import { ApiError, isErrorEnvelope } from "../contract";
+import { HttpError } from "./http-error";
 
 type ClientRequestInit = Omit<RequestInit, "method" | "body">;
 
@@ -135,6 +136,29 @@ const parseBody = async (response: Response): Promise<unknown> => {
   }
 };
 
+/**
+ * Builds the error for a non-OK response. A handshake server stamps its error
+ * envelope with `kind: "HANDSHAKE"`, so that brand is reconstructed 1:1 into an
+ * `ApiError`. Any other non-OK body (e.g. a proxy/gateway or a non-handshake
+ * backend) becomes an `HttpError` carrying the raw body and response.
+ */
+const toResponseError = (
+  data: unknown,
+  httpStatus: number,
+  response: Response,
+): ApiError | HttpError => {
+  if (isErrorEnvelope(data)) {
+    return new ApiError({
+      code: data.code,
+      status: data.status,
+      message: data.message,
+      details: data.details,
+      response,
+    });
+  }
+  return new HttpError(httpStatus, data, response);
+};
+
 interface RequestSpec {
   url: string;
   method: string;
@@ -181,7 +205,7 @@ async function runRequest(
   if (ctx.response) {
     ctx.data = await parseBody(ctx.response);
     if (!ctx.response.ok) {
-      ctx.error = new ApiError(ctx.response.status, ctx.data, ctx.response);
+      ctx.error = toResponseError(ctx.data, ctx.response.status, ctx.response);
     }
   }
 
