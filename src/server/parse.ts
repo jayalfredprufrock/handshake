@@ -1,5 +1,29 @@
 import type { TSchema } from "typebox";
 import * as T from "typebox/value";
+import type { ValidationIssue } from "../contract";
+
+/**
+ * Normalizes raw TypeBox assertion errors (`AssertError.cause.errors`) into the
+ * stable, framework-owned `{ path?, keyword?, message }[]` shape carried by a
+ * `VALIDATION_ERROR`'s `details` — so the wire contract doesn't leak TypeBox's
+ * internal error format. `path` is the instance path in dot notation (no leading
+ * slash), omitted at the root; `keyword` is the failed validation keyword.
+ */
+export function normalizeIssues(raw: unknown): ValidationIssue[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.map((entry): ValidationIssue => {
+    const issue = entry as { instancePath?: unknown; keyword?: unknown; message?: unknown };
+    const message = typeof issue.message === "string" ? issue.message : "Invalid value";
+    const result: ValidationIssue = { message };
+    if (typeof issue.instancePath === "string" && issue.instancePath !== "") {
+      result.path = issue.instancePath.replace(/^\//, "").replace(/\//g, ".");
+    }
+    if (typeof issue.keyword === "string") {
+      result.keyword = issue.keyword;
+    }
+    return result;
+  });
+}
 
 function assertAndReturn(_context: object, type: TSchema, value: unknown): unknown {
   T.Assert(type, value);

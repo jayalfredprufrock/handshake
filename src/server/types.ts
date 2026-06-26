@@ -25,4 +25,7 @@ export interface AdapterTestHarness {
   build(): { request(url: string, init?: RequestInit): Promise<Response> };
 }
 
-export type AdapterFactory = (contract: Contract, options?: AdapterOptions) => AdapterTestHarness;
+export type AdapterFactory = (
+  contract: Contract<any, any, any>,
+  options?: AdapterOptions,
+) => AdapterTestHarness;

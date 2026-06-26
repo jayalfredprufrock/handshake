@@ -2,6 +2,15 @@
  * tell a handshake error response apart from any other non-OK body. */
 export const HANDSHAKE_ERROR_KIND = "HANDSHAKE";
 
+/** A normalized validation issue — the element type of a `VALIDATION_ERROR`'s `details`. */
+export interface ValidationIssue {
+  /** Dot-notation location of the offending value (omitted for a root-level issue). */
+  path?: string;
+  /** The validation keyword that failed (e.g. `"type"`, `"required"`), when available. */
+  keyword?: string;
+  message: string;
+}
+
 /** The wire shape of a handshake error response. */
 export interface ErrorEnvelope<Code extends string = string, Details = unknown> {
   kind: typeof HANDSHAKE_ERROR_KIND;

@@ -87,7 +87,7 @@ const contract = createContract(
 );
 ```
 
-Codes are unique by construction (map keys). The codes `VALIDATION_ERROR` and `UNKNOWN_ERROR` are **reserved** by the framework and throw if declared.
+Codes are unique by construction (map keys). The codes `VALIDATION_ERROR` (400) and `UNKNOWN_ERROR` (500) are **reserved** — they're emitted by the framework and **cannot be declared** in your map (declaring one throws), but they're always available to `contract.error("VALIDATION_ERROR", message, issues?)` (where the optional `issues` is a `{ path?, keyword?, message }[]`) / `contract.error("UNKNOWN_ERROR", message)` and recognized by `contract.isError`, since the client can receive them on any endpoint.
 
 The contract exposes two typed helpers:
 

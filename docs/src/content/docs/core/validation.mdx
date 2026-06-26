@@ -131,7 +131,7 @@ Request bodies reject extra properties because the client is sending data — ex
 
 ## Error Response Shape
 
-Every error response uses the same envelope — `{ kind: "HANDSHAKE", code, status, message, details }`. Request validation failures (params, query, headers, body) return status **400** with:
+Every error response uses the same envelope — `{ kind: "HANDSHAKE", code, status, message, details }`. For a `VALIDATION_ERROR`, `details` is a **normalized array of issues** — `{ path?, keyword?, message }[]` — rather than TypeBox's internal format. `path` is the offending value's location in dot notation (omitted at the root); `keyword` is the failed validation keyword. Request validation failures (params, query, headers, body) return status **400** with:
 
 ```ts
 {
@@ -139,9 +139,10 @@ Every error response uses the same envelope — `{ kind: "HANDSHAKE", code, stat
   code: "VALIDATION_ERROR";
   status: 400;
   message: "Validation failed";
-  details: {
-    issues: unknown;
-  } // TypeBox assertion error details
+  details: [
+    { path: "address.street", keyword: "type", message: "must be string" },
+    { keyword: "required", message: "must have required properties age" },
+  ];
 }
 ```
 

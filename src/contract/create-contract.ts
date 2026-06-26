@@ -1,6 +1,7 @@
 import type { Static, TComposite, TSchema } from "typebox";
 import * as T from "typebox";
 import { ApiError } from "./api-error";
+import type { ValidationIssue } from "./api-error";
 
 export type InferSchema<S> = S extends TSchema ? Static<S> : any;
 
@@ -53,14 +54,33 @@ export type EntriesOf<E extends ErrorMap | undefined> = E extends ErrorMap
     }[Extract<keyof E, string>]
   : never;
 
+/**
+ * Framework error entries — always available via `contract.error`/`isError`,
+ * emitted by the framework, and not declarable in a contract's error map. The
+ * `details` shapes mirror what the adapter sends (kept in sync with the codes in
+ * {@link RESERVED_ERROR_CODES} / `FRAMEWORK_ERROR_STATUS`).
+ */
+export type FrameworkEntries =
+  | { code: "VALIDATION_ERROR"; status: 400; details: ValidationIssue[] | undefined }
+  | { code: "UNKNOWN_ERROR"; status: 500; details: undefined };
+
+/** The full error-entry union a contract exposes: framework errors + declared errors. */
+export type ContractEntries<E extends ErrorMap | undefined> = FrameworkEntries | EntriesOf<E>;
+
 /** The `ApiError` type for an entry union (a discriminated union of `ApiError`s). */
 type ApiErrorOf<Entry extends ErrorEntry> = Entry extends ErrorEntry
   ? ApiError<Entry["code"] & string, Entry["details"]>
   : never;
 
-/** Trailing `details` argument: omitted when the code has no `details` schema,
- * optional when that schema has no required props, required otherwise. */
-type DetailsArg<D> = [D] extends [undefined] ? [] : {} extends D ? [details?: D] : [details: D];
+/** Trailing `details` argument: omitted when the code has no `details`, optional
+ * when the details type admits `undefined` or has no required props, else required. */
+type DetailsArg<D> = [D] extends [undefined]
+  ? []
+  : undefined extends D
+    ? [details?: Exclude<D, undefined>]
+    : {} extends D
+      ? [details?: D]
+      : [details: D];
 
 type IsAny<T> = 0 extends 1 & T ? true : false;
 
@@ -158,8 +178,15 @@ export function applyContractHeaders(
   );
 }
 
-/** Codes the framework emits for its own errors; they cannot be declared by a contract. */
-export const RESERVED_ERROR_CODES = ["VALIDATION_ERROR", "UNKNOWN_ERROR"] as const;
+/**
+ * Codes the framework emits for its own errors. They cannot be *declared* in a
+ * contract's error map, but they ARE throwable via `contract.error` and matched
+ * by `isError` (see {@link FrameworkEntries}). Statuses kept in sync here.
+ */
+export const FRAMEWORK_ERROR_STATUS = { VALIDATION_ERROR: 400, UNKNOWN_ERROR: 500 } as const;
+export const RESERVED_ERROR_CODES = Object.keys(
+  FRAMEWORK_ERROR_STATUS,
+) as (keyof typeof FRAMEWORK_ERROR_STATUS)[];
 
 function assertCodesAllowed(errors: ErrorMap): void {
   for (const code of Object.keys(errors)) {
@@ -178,11 +205,12 @@ export function buildContract(
   if (errors) assertCodesAllowed(errors);
 
   const error = (code: string, message: string, details?: unknown): ApiError => {
-    const def = errors?.[code];
-    if (!def) {
+    const status =
+      errors?.[code]?.status ?? FRAMEWORK_ERROR_STATUS[code as keyof typeof FRAMEWORK_ERROR_STATUS];
+    if (status === undefined) {
       throw new Error(`Unknown error code "${code}"`);
     }
-    return new ApiError({ code, status: def.status, message, details });
+    return new ApiError({ code, status, message, details });
   };
 
   const isError = (err: unknown, code?: string): boolean =>
@@ -193,7 +221,7 @@ export function buildContract(
 
 export function createContract<const C extends Record<string, Endpoint>>(
   endpoints: C,
-): ContractWithApi<C>;
+): ContractWithApi<C, FrameworkEntries>;
 export function createContract<
   const C extends Record<string, Endpoint>,
   E extends ErrorMap | undefined = undefined,
@@ -201,11 +229,11 @@ export function createContract<
 >(
   endpoints: C,
   options: ContractOptions<E, H>,
-): ContractWithApi<WithContractHeaders<C, H>, EntriesOf<E>>;
+): ContractWithApi<WithContractHeaders<C, H>, ContractEntries<E>>;
 export function createContract<const C extends Record<string, Endpoint>>(
   basePath: string,
   endpoints: C,
-): ContractWithApi<C>;
+): ContractWithApi<C, FrameworkEntries>;
 export function createContract<
   const C extends Record<string, Endpoint>,
   E extends ErrorMap | undefined = undefined,
@@ -214,7 +242,7 @@ export function createContract<
   basePath: string,
   endpoints: C,
   options: ContractOptions<E, H>,
-): ContractWithApi<WithContractHeaders<C, H>, EntriesOf<E>>;
+): ContractWithApi<WithContractHeaders<C, H>, ContractEntries<E>>;
 export function createContract(
   basePathOrEndpoints: string | Record<string, Endpoint>,
   endpointsOrOptions?: Record<string, Endpoint> | ContractOptions<any, any>,

@@ -208,9 +208,9 @@ if (contract.isError(err, "CONFLICT")) {
 
 ### Error handling
 
-Every error the server emits — declared or not — is a handshake error envelope, so clients reconstruct them uniformly as `ApiError`. Two codes are **reserved** by the framework and cannot be declared in a contract:
+Every error the server emits — declared or not — is a handshake error envelope, so clients reconstruct them uniformly as `ApiError`. Two codes are **reserved** by the framework and cannot be declared in a contract (but are always available to `contract.error`/`contract.isError`, since the client can receive them on any endpoint):
 
-- **`VALIDATION_ERROR`** (400) — a request failed schema validation; the body includes `issues`.
+- **`VALIDATION_ERROR`** (400) — a request failed schema validation; `details` is a normalized `{ path?, keyword?, message }[]` array of issues.
 - **`UNKNOWN_ERROR`** (500) — an unexpected error, or a handler response that failed validation. The cause is **never leaked** to the client and is logged on the server.
 
 Map unexpected (non-`ApiError`) errors to a typed `ApiError` with `onError`. Returning an `ApiError` shapes the response; returning nothing falls through to `UNKNOWN_ERROR`. The server can **never** emit a non-`ApiError` body, regardless of what `onError` does:

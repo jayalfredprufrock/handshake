@@ -1,10 +1,11 @@
-import type { Contract, Endpoint, ErrorMap, InferSchema } from "../../contract";
+import type { Contract, Endpoint, ErrorMap, InferSchema, ValidationIssue } from "../../contract";
 import { ApiError, errorEnvelope, joinPath } from "../../contract";
 import {
   AssertError,
   type BaseHandlerInput,
   type HandlerOptions,
   QueryNormalizationError,
+  normalizeIssues,
   parseBody,
   parseHeaders,
   parseParams,
@@ -124,16 +125,17 @@ function buildModule(
       hono.on(endpoint.method, [endpoint.path], ...allMw, async (c: Context) => {
         const input: Record<string, unknown> = { c };
 
-        // All framework errors share the contract's error envelope.
-        const validationError = (issues: unknown) =>
-          c.json(errorEnvelope("VALIDATION_ERROR", 400, "Validation failed", { issues }), 400);
+        // All framework errors share the contract's error envelope; VALIDATION_ERROR's
+        // details is the normalized `{ path?, message }[]` array of issues.
+        const validationError = (issues: ValidationIssue[]) =>
+          c.json(errorEnvelope("VALIDATION_ERROR", 400, "Validation failed", issues), 400);
 
         if (endpoint.params) {
           try {
             input.params = parseParams(endpoint.params, c.req.param());
           } catch (error) {
             if (error instanceof AssertError) {
-              return validationError(error.cause.errors);
+              return validationError(normalizeIssues(error.cause.errors));
             }
             throw error;
           }
@@ -144,7 +146,7 @@ function buildModule(
             input.query = parseQuery(endpoint.query, c.req.queries() as Record<string, string[]>);
           } catch (error) {
             if (error instanceof AssertError) {
-              return validationError(error.cause.errors);
+              return validationError(normalizeIssues(error.cause.errors));
             }
             if (error instanceof QueryNormalizationError) {
               return validationError([{ message: error.message }]);
@@ -158,7 +160,7 @@ function buildModule(
             input.headers = parseHeaders(endpoint.headers, c.req.header());
           } catch (error) {
             if (error instanceof AssertError) {
-              return validationError(error.cause.errors);
+              return validationError(normalizeIssues(error.cause.errors));
             }
             throw error;
           }
@@ -169,7 +171,7 @@ function buildModule(
             input.body = parseBody(endpoint.body, await c.req.json());
           } catch (error) {
             if (error instanceof AssertError) {
-              return validationError(error.cause.errors);
+              return validationError(normalizeIssues(error.cause.errors));
             }
             throw error;
           }

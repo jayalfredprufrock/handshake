@@ -131,10 +131,62 @@ describe("contract.isError", () => {
   test("bare guard narrows the error to the contract's code union", () => {
     const err: unknown = contract.error("NOT_FOUND", "not found");
     if (contract.isError(err)) {
-      expectTypeOf(err.code).toEqualTypeOf<"UNAUTHORIZED" | "NOT_FOUND" | "CONFLICT">();
+      expectTypeOf(err.code).toEqualTypeOf<
+        "UNAUTHORIZED" | "NOT_FOUND" | "CONFLICT" | "VALIDATION_ERROR" | "UNKNOWN_ERROR"
+      >();
       if (err.code === "CONFLICT") {
         expectTypeOf(err.details).toEqualTypeOf<{ conflictingId: string }>();
       }
     }
+  });
+});
+
+describe("framework error codes (always available)", () => {
+  const contract = createContract({ x: { method: "GET", path: "/", response: T.Null() } });
+
+  test("contract.error can throw VALIDATION_ERROR and UNKNOWN_ERROR", () => {
+    const v = contract.error("VALIDATION_ERROR", "bad", [
+      { path: "name", keyword: "type", message: "must be string" },
+    ]);
+    expect(v.code).toBe("VALIDATION_ERROR");
+    expect(v.status).toBe(400);
+    expect(v.details).toEqual([{ path: "name", keyword: "type", message: "must be string" }]);
+
+    const u = contract.error("UNKNOWN_ERROR", "boom");
+    expect(u.code).toBe("UNKNOWN_ERROR");
+    expect(u.status).toBe(500);
+    expect(u.details).toBeUndefined();
+  });
+
+  test("isError recognizes and narrows framework codes", () => {
+    const err: unknown = contract.error("VALIDATION_ERROR", "bad", [{ message: "nope" }]);
+    expect(contract.isError(err)).toBe(true);
+    expect(contract.isError(err, "VALIDATION_ERROR")).toBe(true);
+    expect(contract.isError(err, "UNKNOWN_ERROR")).toBe(false);
+    if (contract.isError(err, "VALIDATION_ERROR")) {
+      expectTypeOf(err.details).toEqualTypeOf<
+        { path?: string; keyword?: string; message: string }[] | undefined
+      >();
+    }
+  });
+
+  test("VALIDATION_ERROR details are optional", () => {
+    const e = contract.error("VALIDATION_ERROR", "Phone is invalid");
+    expect(e.code).toBe("VALIDATION_ERROR");
+    expect(e.status).toBe(400);
+    expect(e.details).toBeUndefined();
+    void (() => {
+      // @ts-expect-error when provided, details must be a ValidationIssue[]
+      contract.error("VALIDATION_ERROR", "bad", "not an array");
+    });
+  });
+
+  test("reserved codes still cannot be declared in the error map", () => {
+    expect(() =>
+      createContract(
+        { y: { method: "GET", path: "/", response: T.Null() } },
+        { errors: { VALIDATION_ERROR: { status: 400 } } },
+      ),
+    ).toThrow(/reserved/);
   });
 });

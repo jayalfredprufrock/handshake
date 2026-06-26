@@ -101,8 +101,10 @@ Every error the server emits is an `ApiError` (`{ code, status, message, details
 
 Two codes are **reserved** and emitted by the framework:
 
-- **`VALIDATION_ERROR`** (400) — a request failed validation; body includes `issues`.
+- **`VALIDATION_ERROR`** (400) — a request failed validation; `details` is a normalized `{ path?, keyword?, message }[]` array of issues.
 - **`UNKNOWN_ERROR`** (500) — an unexpected error, or a handler response that failed validation. The cause is never sent to the client; it's logged on the server.
+
+You can't _declare_ these in a contract's error map, but they're always throwable via `contract.error` (`contract.error("VALIDATION_ERROR", msg, issues?)` — the `issues` array is optional, e.g. `contract.error("VALIDATION_ERROR", "Phone number is invalid")` — and `contract.error("UNKNOWN_ERROR", msg)`) and matched by `contract.isError` — the client may receive them from any endpoint.
 
 ### `createHonoApp(modules, options?)`
 

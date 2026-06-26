@@ -297,12 +297,13 @@ describe("error handling", () => {
       kind: string;
       code: string;
       status: number;
-      details: { issues: unknown };
+      details: { path?: string; keyword?: string; message: string }[];
     };
     expect(body.kind).toBe("HANDSHAKE");
     expect(body.code).toBe("VALIDATION_ERROR");
     expect(body.status).toBe(400);
-    expect(body.details.issues).toBeDefined();
+    // details is the normalized { path?, keyword?, message }[] array (no TypeBox internals)
+    expect(body.details).toEqual([{ path: "name", keyword: "type", message: "must be string" }]);
   });
 
   test("a bad response surfaces as UNKNOWN_ERROR but onError can detect why", async () => {

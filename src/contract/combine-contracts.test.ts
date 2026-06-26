@@ -171,7 +171,9 @@ describe("combineContracts", () => {
       const err: unknown = combined.error("CONFLICT", "conflict", { conflictingId: "1" });
 
       if (combined.isError(err)) {
-        expectTypeOf(err.code).toEqualTypeOf<"NOT_FOUND" | "CONFLICT">();
+        expectTypeOf(err.code).toEqualTypeOf<
+          "NOT_FOUND" | "CONFLICT" | "VALIDATION_ERROR" | "UNKNOWN_ERROR"
+        >();
         if (err.code === "CONFLICT") {
           expectTypeOf(err.details).toEqualTypeOf<{ conflictingId: string }>();
         }
@@ -188,7 +190,9 @@ describe("combineContracts", () => {
       });
 
       expect(combined.error("UNAUTHORIZED", "unauthorized").status).toBe(401);
-      expectTypeOf(combined.error).parameter(0).toEqualTypeOf<"UNAUTHORIZED">();
+      expectTypeOf(combined.error)
+        .parameter(0)
+        .toEqualTypeOf<"UNAUTHORIZED" | "VALIDATION_ERROR" | "UNKNOWN_ERROR">();
       // @ts-expect-error — undeclared code must be rejected at the type level
       expect(() => combined.error("NOT_A_REAL_CODE", "msg")).toThrow(/Unknown error code/);
     });
