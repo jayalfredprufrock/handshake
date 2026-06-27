@@ -2,6 +2,7 @@ import { describe, expect, expectTypeOf, test, vi } from "vite-plus/test";
 import * as T from "typebox";
 import { ApiError, createContract, errorEnvelope } from "../contract";
 import { createFetchClient, HttpError } from "../client";
+import type { RetryContext } from "./make-client";
 
 const json = (status: number, body?: unknown, headers: Record<string, string> = {}) =>
   new Response(body === undefined ? null : JSON.stringify(body), {
@@ -246,6 +247,10 @@ describe("createFetchClient hooks", () => {
       .fn()
       .mockResolvedValueOnce(json(401, errorEnvelope("TOKEN_EXPIRED", 401, "expired", undefined)))
       .mockResolvedValueOnce(json(200, { id: "1" }));
+    // `error` is a required key on RetryContext — retry only ever runs on failure,
+    // so callbacks never have to guard against an absent error. (An optional key
+    // would make `Pick` `{ error?: unknown }`, which is not equal to the below.)
+    expectTypeOf<Pick<RetryContext, "error">>().toEqualTypeOf<{ error: unknown }>();
     const client = createFetchClient(contract, {
       fetch,
       baseUrl: "https://x.com",
@@ -260,6 +265,110 @@ describe("createFetchClient hooks", () => {
     await expect(client.me()).resolves.toEqual({ id: "1" });
     expect(refresh).toHaveBeenCalledTimes(1);
     expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  test("headers returned from retry are merged into the next attempt", async () => {
+    const sent: (string | null)[] = [];
+    const fetch = vi.fn(async (req: Request | string | URL) => {
+      sent.push((req as Request).headers.get("authorization"));
+      return sent.length === 1 ? json(401, {}) : json(200, { id: "1" });
+    });
+    const client = createFetchClient(getUserContract, {
+      fetch,
+      baseUrl: "https://x.com",
+      retry: (ctx) => (ctx.attempt < 2 ? { headers: { authorization: "Bearer fresh" } } : false),
+    });
+    await expect(client.getUser({ id: "1" })).resolves.toEqual({ id: "1" });
+    expect(sent).toEqual([null, "Bearer fresh"]);
+  });
+
+  test("the request body is re-serialized on a retry", async () => {
+    const bodies: string[] = [];
+    const fetch = vi.fn(async (req: Request | string | URL) => {
+      bodies.push(await (req as Request).text());
+      return bodies.length === 1 ? json(503, {}) : json(200, { id: "1" });
+    });
+    const contract = createContract({
+      createUser: {
+        method: "POST",
+        path: "/users",
+        body: T.Object({ name: T.String() }),
+        response: T.Object({ id: T.String() }),
+      },
+    });
+    const client = createFetchClient(contract, {
+      fetch,
+      baseUrl: "https://x.com",
+      retry: (ctx) => (ctx.attempt < 2 ? { headers: { "x-retry": "1" } } : false),
+    });
+
+    await expect(client.createUser({ name: "Ada" })).resolves.toEqual({ id: "1" });
+    // Body is rebuilt from the spec on the retried attempt, not consumed/empty.
+    expect(bodies).toEqual([JSON.stringify({ name: "Ada" }), JSON.stringify({ name: "Ada" })]);
+  });
+
+  test("retry can override the url, method, and body", async () => {
+    const seen: { url: string; method: string; body: string }[] = [];
+    const fetch = vi.fn(async (req: Request | string | URL) => {
+      const r = req as Request;
+      seen.push({ url: r.url, method: r.method, body: await r.text() });
+      return seen.length === 1 ? json(500, {}) : json(200, { id: "1" });
+    });
+    const contract = createContract({
+      createUser: {
+        method: "POST",
+        path: "/users",
+        body: T.Object({ name: T.String() }),
+        response: T.Object({ id: T.String() }),
+      },
+    });
+    const client = createFetchClient(contract, {
+      fetch,
+      baseUrl: "https://x.com",
+      retry: (ctx) =>
+        ctx.attempt < 2
+          ? { url: "https://x.com/users/retry", method: "PUT", body: { name: "Bob" } }
+          : false,
+    });
+
+    await expect(client.createUser({ name: "Ada" })).resolves.toEqual({ id: "1" });
+    expect(seen[0]).toEqual({
+      url: "https://x.com/users",
+      method: "POST",
+      body: JSON.stringify({ name: "Ada" }),
+    });
+    expect(seen[1]).toEqual({
+      url: "https://x.com/users/retry",
+      method: "PUT",
+      body: JSON.stringify({ name: "Bob" }),
+    });
+  });
+
+  test("retry can override fetch init (e.g. credentials)", async () => {
+    const seen: string[] = [];
+    const fetch = vi.fn(async (req: Request | string | URL) => {
+      seen.push((req as Request).credentials);
+      return seen.length === 1 ? json(500, {}) : json(200, { id: "1" });
+    });
+    const client = createFetchClient(getUserContract, {
+      fetch,
+      baseUrl: "https://x.com",
+      retry: (ctx) => (ctx.attempt < 2 ? { credentials: "include" } : false),
+    });
+    await expect(client.getUser({ id: "1" })).resolves.toEqual({ id: "1" });
+    expect(seen).toEqual(["same-origin", "include"]);
+  });
+
+  test("returning nothing (or false) prevents a retry", async () => {
+    const fetch = vi.fn(async () => json(500, { error: "boom" }));
+    const client = createFetchClient(getUserContract, {
+      fetch,
+      baseUrl: "https://x.com",
+      // no explicit return → undefined → do not retry
+      retry: () => {},
+    });
+    await expect(client.getUser({ id: "1" })).rejects.toBeInstanceOf(HttpError);
+    expect(fetch).toHaveBeenCalledTimes(1);
   });
 });
 

@@ -41,7 +41,7 @@ export type ClientEndpoint<E extends Endpoint> = E["params"] extends TSchema
       ) => Promise<InferSchema<E["response"]>>
     : (...options: OptionsArgs<E>) => Promise<InferSchema<E["response"]>>;
 
-/** The full request context handed to `handleResponse` and `retry`. */
+/** The full request context handed to `handleResponse`. */
 export interface ResponseContext {
   request: Request;
   /** The response, or `undefined` when the fetch itself rejected (network error). */
@@ -58,6 +58,46 @@ export interface ResponseContext {
   error?: unknown;
 }
 
+/**
+ * The context handed to `retry`. Narrows {@link ResponseContext}: `retry` only runs
+ * for a failed attempt, so `error` is always present (an `ApiError` for a non-OK
+ * response, the raw error for a network rejection, or whatever `handleResponse` threw).
+ * `request` is the request that was sent, for inspection; to reshape the next attempt,
+ * return {@link RetryOverrides} rather than mutating it.
+ */
+export interface RetryContext extends ResponseContext {
+  error: unknown;
+}
+
+/** Header overrides: a friendly record (numbers/booleans allowed) or a standard
+ * `HeadersInit` (a `Headers` instance or `[name, value]` pairs). */
+export type OverrideHeaders =
+  | Record<string, string | number | boolean | undefined>
+  | Headers
+  | [string, string][];
+
+/**
+ * Overrides `retry` may return to reshape the retried request — a fetch `RequestInit`
+ * (`signal`, `credentials`, `cache`, …) plus `url`, and with `headers` widened to also
+ * accept a friendly record. They are merged over the original call — so the body is
+ * re-serialized each attempt — and accumulate across retries. `handleRequest` still runs
+ * afterward and wins. Returning any overrides (even `{}`) implies a retry; return `true`
+ * to retry unchanged.
+ */
+export interface RetryOverrides extends Omit<ClientRequestInit, "headers"> {
+  /** Header values to set, applied last so they win over the call's own headers. */
+  headers?: OverrideHeaders;
+  /** Replace the request URL (including any query string). */
+  url?: string;
+  /** Replace the HTTP method. */
+  method?: string;
+  /** Replace the JSON request body (re-serialized on the retried attempt). */
+  body?: unknown;
+}
+
+/** What `retry` returns: `false`/nothing to stop, `true` to retry as-is, overrides to reshape. */
+export type RetryDecision = boolean | RetryOverrides;
+
 /** The context handed to `handleRequest` before a request is sent. */
 export interface RequestContext {
   request: Request;
@@ -72,8 +112,11 @@ export interface FetchClientConfig {
   handleRequest?: (ctx: RequestContext) => Request | void | Promise<Request | void>;
   /** Inspect every response; throw to reject an otherwise-successful response or reshape an error. */
   handleResponse?: (ctx: ResponseContext) => void | Promise<void>;
-  /** Decide whether to retry a failed attempt. Return `true` to re-issue the request. */
-  retry?: (ctx: ResponseContext) => boolean | Promise<boolean>;
+  /**
+   * Decide whether to retry a failed attempt. Return `true` (or a {@link RetryOverrides}
+   * patch to reshape the request) to re-issue it; `false` or nothing to give up and throw.
+   */
+  retry?: (ctx: RetryContext) => RetryDecision | void | Promise<RetryDecision | void>;
 }
 
 export type ClientOf<Ct extends Contract<any, any, any>> =
@@ -167,27 +210,74 @@ interface RequestSpec {
   headers: Record<string, string | number | boolean | undefined> | undefined;
 }
 
+/** Applies headers onto `target`, accepting either a friendly record (numbers/booleans
+ * coerced, nullish skipped) or any standard `HeadersInit`. */
+function applyHeaders(target: Headers, source: OverrideHeaders | undefined): void {
+  if (!source) return;
+  if (source instanceof Headers || Array.isArray(source)) {
+    new Headers(source).forEach((value, key) => target.set(key, value));
+    return;
+  }
+  for (const [key, value] of Object.entries(source)) {
+    if (value !== undefined && value !== null) target.set(key, String(value));
+  }
+}
+
+/**
+ * Builds the `Request` for an attempt from the call's {@link RequestSpec} plus any
+ * accumulated retry {@link RetryOverrides} (override headers/method/url/body/init win;
+ * a later `handleRequest` can still override those).
+ */
+function buildRequestFromSpec(spec: RequestSpec, overrides?: RetryOverrides): Request {
+  const { url, method, body, headers: overrideHeaders, ...initOverrides } = overrides ?? {};
+
+  // Headers low-to-high precedence: declared, then options.request, then retry overrides.
+  const headers = new Headers();
+  applyHeaders(headers, spec.headers);
+  applyHeaders(headers, spec.init?.headers);
+  applyHeaders(headers, overrideHeaders);
+
+  // Override init (signal, credentials, …) wins over the call's; method/headers are set
+  // explicitly afterward so they aren't clobbered by the spread.
+  const init: RequestInit = {
+    ...spec.init,
+    ...initOverrides,
+    method: method ?? spec.method,
+    headers,
+  };
+  const finalBody = overrides && "body" in overrides ? body : spec.body;
+  if (finalBody !== undefined) {
+    init.body = JSON.stringify(finalBody);
+    if (!headers.has("content-type")) {
+      headers.set("content-type", "application/json");
+    }
+  }
+  return new Request(url ?? spec.url, init);
+}
+
+/** Accumulates retry overrides so an earlier attempt's changes persist into later ones. */
+function mergeOverrides(prev: RetryOverrides | undefined, next: RetryOverrides): RetryOverrides {
+  const merged: RetryOverrides = { ...prev, ...next };
+  if (prev?.headers || next.headers) {
+    // Headers may be records or HeadersInit; fold both into one Headers to merge them.
+    const headers = new Headers();
+    applyHeaders(headers, prev?.headers);
+    applyHeaders(headers, next.headers);
+    merged.headers = headers;
+  }
+  return merged;
+}
+
 async function runRequest(
   config: FetchClientConfig,
   fetchImpl: typeof globalThis.fetch,
   spec: RequestSpec,
   attempt = 1,
+  overrides?: RetryOverrides,
 ): Promise<unknown> {
-  // Declared headers first; then options.request.headers (and later handleRequest) win.
-  const headers = new Headers();
-  for (const [key, value] of Object.entries(spec.headers ?? {})) {
-    if (value !== undefined && value !== null) headers.set(key, String(value));
-  }
-  if (spec.init?.headers) new Headers(spec.init.headers).forEach((v, k) => headers.set(k, v));
-
-  const init: RequestInit = { ...spec.init, method: spec.method, headers };
-  if (spec.body !== undefined) {
-    init.body = JSON.stringify(spec.body);
-    if (!headers.has("content-type")) {
-      headers.set("content-type", "application/json");
-    }
-  }
-  let request = new Request(spec.url, init);
+  // Each attempt rebuilds a fresh request from the spec (so the body is re-serialized)
+  // with the overrides a prior `retry` accumulated merged in.
+  let request = buildRequestFromSpec(spec, overrides);
 
   if (config.handleRequest) {
     const replaced = await config.handleRequest({ request, attempt });
@@ -221,8 +311,14 @@ async function runRequest(
     return ctx.data;
   }
 
-  if (config.retry && (await config.retry(ctx))) {
-    return runRequest(config, fetchImpl, spec, attempt + 1);
+  // `error` is defined past the guard above, so `ctx` satisfies `RetryContext`. A truthy
+  // decision retries; an overrides object also reshapes (and accumulates onto) the next one.
+  if (config.retry) {
+    const decision = await config.retry(ctx as RetryContext);
+    if (decision) {
+      const next = decision === true ? overrides : mergeOverrides(overrides, decision);
+      return runRequest(config, fetchImpl, spec, attempt + 1, next);
+    }
   }
 
   throw ctx.error;
