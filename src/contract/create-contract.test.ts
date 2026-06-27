@@ -181,6 +181,37 @@ describe("contract.isError", () => {
     }
   });
 
+  test("an array of codes matches any (logical OR) and narrows to their union", () => {
+    const conflict: unknown = contract.error("CONFLICT", "id conflict", { conflictingId: "7" });
+    const notFound: unknown = contract.error("NOT_FOUND", "missing");
+
+    expect(contract.isError(conflict, ["CONFLICT", "NOT_FOUND"])).toBe(true);
+    expect(contract.isError(notFound, ["CONFLICT", "NOT_FOUND"])).toBe(true);
+    expect(contract.isError(notFound, ["CONFLICT", "UNAUTHORIZED"])).toBe(false);
+    expect(contract.isError(new Error("x"), ["CONFLICT"])).toBe(false);
+    expect(contract.isError(conflict, [])).toBe(false); // empty array matches nothing
+
+    if (contract.isError(conflict, ["CONFLICT", "NOT_FOUND"])) {
+      expectTypeOf(conflict.code).toEqualTypeOf<"CONFLICT" | "NOT_FOUND">();
+      if (conflict.code === "CONFLICT") {
+        expectTypeOf(conflict.details).toEqualTypeOf<{ conflictingId: string }>();
+      }
+    }
+  });
+
+  test("the array form accepts framework codes too", () => {
+    const err: unknown = contract.error("VALIDATION_ERROR", "bad");
+    expect(contract.isError(err, ["NOT_FOUND", "VALIDATION_ERROR"])).toBe(true);
+    expect(contract.isError(err, ["NOT_FOUND", "CONFLICT"])).toBe(false);
+  });
+
+  test("rejects undeclared codes in the array at compile time", () => {
+    void (() => {
+      // @ts-expect-error "NOPE" is not a declared error code
+      contract.isError(null, ["CONFLICT", "NOPE"]);
+    });
+  });
+
   test("bare guard narrows the error to the contract's code union", () => {
     const err: unknown = contract.error("NOT_FOUND", "not found");
     if (contract.isError(err)) {

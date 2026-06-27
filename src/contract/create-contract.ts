@@ -108,6 +108,12 @@ export type ErrorGuard<Entry extends ErrorEntry = never> =
         ): err is [Entry] extends [never]
           ? ApiError<Code & string>
           : ApiError<Code & string, Extract<Entry, { code: Code }>["details"]>;
+        <Code extends [Entry] extends [never] ? string : Entry["code"]>(
+          err: unknown,
+          codes: readonly Code[],
+        ): err is [Entry] extends [never]
+          ? ApiError<Code & string>
+          : ApiErrorOf<Extract<Entry, { code: Code }>>;
       };
 
 export interface Contract<
@@ -227,8 +233,9 @@ export function buildContract(
 ): ContractWithApi<any, any, any> {
   const error = makeErrorFactory(errors);
 
-  const isError = (err: unknown, code?: string): boolean =>
-    err instanceof ApiError && (code === undefined || err.code === code);
+  const isError = (err: unknown, code?: string | readonly string[]): boolean =>
+    err instanceof ApiError &&
+    (code === undefined ? true : Array.isArray(code) ? code.includes(err.code) : err.code === code);
 
   return { basePath, endpoints, errors, named, error, isError } as ContractWithApi<any, any, any>;
 }
