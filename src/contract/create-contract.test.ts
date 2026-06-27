@@ -1,7 +1,7 @@
 import { describe, expect, expectTypeOf, test } from "vite-plus/test";
 import * as T from "typebox";
 import { ApiError } from "./api-error";
-import { createContract } from "./create-contract";
+import { createContract, makeErrorFactory } from "./create-contract";
 
 const errors = {
   UNAUTHORIZED: { status: 401 },
@@ -73,6 +73,59 @@ describe("createContract", () => {
         { errors: { UNKNOWN_ERROR: { status: 500 } } },
       ),
     ).toThrow(/reserved/);
+  });
+});
+
+describe("makeErrorFactory (standalone)", () => {
+  test("builds the same typed factory contract.error exposes", () => {
+    const error = makeErrorFactory(errors);
+    const err = error("CONFLICT", "id conflict", { conflictingId: "7" });
+    expect(err).toBeInstanceOf(ApiError);
+    expect(err.code).toBe("CONFLICT");
+    expect(err.status).toBe(409);
+    expect(err.details).toEqual({ conflictingId: "7" });
+  });
+
+  test("framework codes are available without declaring any errors", () => {
+    const error = makeErrorFactory();
+    const v = error("VALIDATION_ERROR", "bad");
+    expect(v.code).toBe("VALIDATION_ERROR");
+    expect(v.status).toBe(400);
+
+    const u = error("UNKNOWN_ERROR", "boom");
+    expect(u.status).toBe(500);
+  });
+
+  test("throws on reserved codes and unknown codes", () => {
+    expect(() => makeErrorFactory({ VALIDATION_ERROR: { status: 400 } })).toThrow(/reserved/);
+    // unknown code is a runtime guard for callers reaching past the types
+    expect(() => (makeErrorFactory(errors) as (...a: unknown[]) => unknown)("NOPE", "x")).toThrow(
+      /Unknown error code/,
+    );
+  });
+
+  test("the same map shared with createContract yields matching codes/statuses", () => {
+    const error = makeErrorFactory(errors);
+    const contract = createContract(
+      { create: { method: "POST", path: "/", response: T.Null() } },
+      { errors },
+    );
+    const fromFactory = error("NOT_FOUND", "missing");
+    const fromContract = contract.error("NOT_FOUND", "missing");
+    expect(fromFactory.code).toBe(fromContract.code);
+    expect(fromFactory.status).toBe(fromContract.status);
+  });
+
+  test("enforces declared codes and details at compile time", () => {
+    const error = makeErrorFactory(errors);
+    void (() => {
+      // @ts-expect-error "NOPE" is not a declared error code
+      error("NOPE", "msg");
+      // @ts-expect-error CONFLICT requires a details payload
+      error("CONFLICT", "msg");
+      const ok = error("CONFLICT", "msg", { conflictingId: "1" });
+      expectTypeOf(ok.details).toEqualTypeOf<{ conflictingId: string }>();
+    });
   });
 });
 

@@ -196,14 +196,18 @@ function assertCodesAllowed(errors: ErrorMap): void {
   }
 }
 
-export function buildContract(
-  basePath: string,
-  endpoints: Record<string, Endpoint>,
-  errors: ErrorMap | undefined,
-  named?: Record<string, Contract<any, any>>,
-): ContractWithApi<any, any, any> {
+/**
+ * Builds a standalone, typed error factory from an error map — the same factory
+ * `contract.error` exposes, but usable anywhere (services, middleware) without a
+ * contract. The status comes from the code's def; the framework codes
+ * `VALIDATION_ERROR`/`UNKNOWN_ERROR` are always available. Pass the **same** map to
+ * `createContract({ errors })` so the codes are declared and thus serialized
+ * (rather than treated as unknown and collapsed into `UNKNOWN_ERROR`).
+ */
+export function makeErrorFactory<const E extends ErrorMap | undefined = undefined>(
+  errors?: E,
+): ErrorFactory<ContractEntries<E>> {
   if (errors) assertCodesAllowed(errors);
-
   const error = (code: string, message: string, details?: unknown): ApiError => {
     const status =
       errors?.[code]?.status ?? FRAMEWORK_ERROR_STATUS[code as keyof typeof FRAMEWORK_ERROR_STATUS];
@@ -212,6 +216,16 @@ export function buildContract(
     }
     return new ApiError({ code, status, message, details });
   };
+  return error as ErrorFactory<ContractEntries<E>>;
+}
+
+export function buildContract(
+  basePath: string,
+  endpoints: Record<string, Endpoint>,
+  errors: ErrorMap | undefined,
+  named?: Record<string, Contract<any, any>>,
+): ContractWithApi<any, any, any> {
+  const error = makeErrorFactory(errors);
 
   const isError = (err: unknown, code?: string): boolean =>
     err instanceof ApiError && (code === undefined || err.code === code);
