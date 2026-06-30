@@ -31,7 +31,10 @@ export default defineConfig({
         },
         {
           label: "Server",
-          items: [{ label: "Hono", slug: "server/hono" }],
+          items: [
+            { label: "Hono", slug: "server/hono" },
+            { label: "NestJS", slug: "server/nestjs" },
+          ],
         },
         {
           label: "Client",

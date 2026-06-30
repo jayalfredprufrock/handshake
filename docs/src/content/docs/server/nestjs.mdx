@@ -1,0 +1,176 @@
+---
+title: NestJS
+description: Server adapter for NestJS — bind contracts to typed, validated controller methods.
+---
+
+The NestJS adapter binds a contract to ordinary Nest controller methods. It parses and validates requests, serializes responses, and emits the same handshake error envelope as the other adapters — so the same fetch client works unchanged against a Nest server. Dependency injection, guards, interceptors, and pipes all work as usual.
+
+## Installation
+
+```sh
+npm install @jayalfredprufrock/handshake @nestjs/common @nestjs/core typebox reflect-metadata
+```
+
+The adapter ships **legacy decorators**, so your `tsconfig.json` needs the standard Nest settings:
+
+```json
+{
+  "compilerOptions": {
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true
+  }
+}
+```
+
+## Basic usage
+
+Import `HandshakeModule.forRoot()` once at the app root; it registers the interceptor (request parsing/validation + response validation) and the exception filter (envelope serialization) globally.
+
+```ts
+import { Module } from "@nestjs/common";
+import { HandshakeModule } from "@jayalfredprufrock/handshake/nestjs";
+import { contract } from "./contract";
+import { UserController } from "./user.controller";
+
+@Module({
+  imports: [HandshakeModule.forRoot({ contracts: [contract] })],
+  controllers: [UserController],
+})
+export class AppModule {}
+```
+
+Then implement endpoints as controller methods with `@HandshakeHandler`:
+
+```ts
+import { Controller } from "@nestjs/common";
+import { HandshakeHandler, HandshakeReq } from "@jayalfredprufrock/handshake/nestjs";
+import type { HandshakeInput } from "@jayalfredprufrock/handshake/nestjs";
+import { contract } from "./contract";
+import { UserService } from "./user.service";
+
+@Controller() // no prefix — the route comes from the contract
+export class UserController {
+  constructor(private readonly users: UserService) {}
+
+  @HandshakeHandler(contract, "getUser")
+  getUser(@HandshakeReq() req: HandshakeInput<typeof contract, "getUser">) {
+    const user = this.users.find(req.params.id);
+    if (!user) throw contract.error("NOT_FOUND", "user not found");
+    return user;
+  }
+
+  @HandshakeHandler(contract, "createUser")
+  createUser(@HandshakeReq() req: HandshakeInput<typeof contract, "createUser">) {
+    return this.users.create(req.body);
+  }
+}
+```
+
+## `@HandshakeHandler(contract, endpointName, options?)`
+
+Binds a method to a contract endpoint. It:
+
+- registers the route at `joinPath(contract.basePath, endpoint.path)` with the endpoint's HTTP verb,
+- sets the success status to `endpoint.responseCode ?? 200` (overriding Nest's POST→`201` default),
+- **enforces the method's return type** against the endpoint's response schema.
+
+You don't annotate the return type — returning a value that doesn't match the schema is a compile error on its own.
+
+:::note[Return-type errors]
+Because this uses a legacy method decorator, a mismatched return surfaces as `TS1241: Unable to resolve signature of method decorator when called as an expression` on the method, rather than a precise "property X is missing." The error points at the right method; the cause is always the return value not matching the response schema.
+:::
+
+### Options
+
+```ts
+interface HandshakeHandlerOptions {
+  validateResponse?: boolean; // per-endpoint override of the module default
+}
+```
+
+## `@HandshakeReq()` and input typing
+
+`@HandshakeReq()` injects the parsed, validated input. Type it with `HandshakeInput<typeof contract, "endpointName">`; the object contains only the fields the endpoint declares:
+
+| Field     | Present when               | Type                   |
+| --------- | -------------------------- | ---------------------- |
+| `params`  | endpoint defines `params`  | `Static<E["params"]>`  |
+| `query`   | endpoint defines `query`   | `Static<E["query"]>`   |
+| `headers` | endpoint defines `headers` | `Static<E["headers"]>` |
+| `body`    | endpoint defines `body`    | `Static<E["body"]>`    |
+
+The full Nest toolbox still applies — inject services via the constructor, and layer `@UseGuards`, `@UseInterceptors`, and `@UsePipes` alongside `@HandshakeHandler`.
+
+### Return values
+
+- **A plain value** matching the response schema — serialized as JSON at the configured status.
+- **A `Response`** — passed through as-is, bypassing response validation.
+
+### Validation
+
+- **Params, query, headers** are coerced to the schema; failures produce `VALIDATION_ERROR` (400).
+- **Body** is validated strictly (no missing/extra properties).
+- **Responses** are validated when `validateResponse` is on (the default) — unknown properties are stripped, and a mismatch is a server bug surfaced as `UNKNOWN_ERROR`.
+
+## Routing
+
+The contract owns the path. Use `@Controller()` with **no prefix**: the route is `joinPath(contract.basePath, endpoint.path)`. Nest's global prefix, versioning, and controller prefixes are ignored — keeping the server, client, and OpenAPI document in lockstep with the contract.
+
+## Error handling
+
+Every error the server emits is a handshake envelope — `{ kind: "HANDSHAKE", code, status, message, details }` — identical to the other adapters. Throw a declared error with `contract.error("CODE", message, details?)` (or `new ApiError({...})`); a **known-code** `ApiError` is serialized **wherever it's thrown** — a handler, a guard, an interceptor, or a service — with no extra wiring.
+
+Two codes are reserved and emitted by the framework:
+
+- **`VALIDATION_ERROR`** (400) — a request failed validation; `details` is a normalized `{ path?, keyword?, message }[]`.
+- **`UNKNOWN_ERROR`** (500) — an unexpected error, or a response that failed validation. The cause is never sent to the client; inspect it in `onError`. (The library never writes to the console.)
+
+### `HandshakeModule.forRoot(options?)`
+
+```ts
+interface HandshakeModuleOptions {
+  validateResponse?: boolean;
+  onError?: (err: unknown, host: ArgumentsHost) => ApiError | void | Promise<ApiError | void>;
+  contracts?: Contract[];
+}
+```
+
+- **`onError`** handles any error the framework didn't already serialize as a recognized contract error — plain exceptions, Nest `HttpException`s, and `ApiError`s with an unrecognized code. Return an `ApiError` to shape the response, or nothing for the default disposition (an `HttpException` keeps its own status; anything else becomes `UNKNOWN_ERROR`). The server can never emit a non-handshake body, regardless of what `onError` does.
+- **`contracts`** lets the filter recognize declared codes globally — including errors thrown from guards or services before a route matches. When omitted, only a matched route's own contract codes (plus the framework codes) are recognized, and any other `ApiError` code becomes `UNKNOWN_ERROR`. Pass every contract you serve.
+
+```ts
+import { ResponseValidationError } from "@jayalfredprufrock/handshake/server";
+
+HandshakeModule.forRoot({
+  contracts: [contract],
+  onError: (err) => {
+    if (err instanceof ResponseValidationError) log.alert("contract drift", err.issues);
+    // return nothing → client gets { code: "UNKNOWN_ERROR" } (cause never sent)
+  },
+});
+```
+
+### Nest HttpExceptions
+
+A Nest `HttpException` (from the framework, a guard, or a pipe) reaches `onError` like any other non-contract error. If `onError` doesn't return an `ApiError`, it **keeps its own status and response** — it is _not_ collapsed into `UNKNOWN_ERROR` — and the client surfaces it as a non-handshake [`HttpError`](/handshake/client/fetch/#errors). To convert it into a typed contract error, map it in `onError`:
+
+```ts
+import { HttpException } from "@nestjs/common";
+
+HandshakeModule.forRoot({
+  contracts: [contract],
+  onError: (err) =>
+    err instanceof HttpException ? contract.error("UNAUTHORIZED", err.message) : undefined,
+});
+```
+
+## Manual wiring
+
+`HandshakeModule.forRoot()` registers the interceptor and filter globally. If you need scoped or manual control, both are exported as classes — apply them with `@UseInterceptors`/`@UseFilters` or your own `APP_INTERCEPTOR`/`APP_FILTER` providers:
+
+```ts
+import {
+  HandshakeInterceptor,
+  HandshakeExceptionFilter,
+} from "@jayalfredprufrock/handshake/nestjs";
+```

@@ -5,9 +5,14 @@ export default defineConfig({
     "*": "vp check --fix",
   },
   fmt: {},
-  // `docs` (Astro) is excluded from tsconfig and uses virtual modules the
-  // type checker can't resolve, so keep it out of the type-aware lint pass.
-  lint: { ignorePatterns: ["docs/**"], options: { typeAware: true, typeCheck: true } },
+  // `docs` (Astro, virtual modules the type checker can't resolve) and the
+  // NestJS example (a standalone sample app with its own standard Nest toolchain
+  // — CommonJS + legacy decorators + `nest build`, validated on its own) are kept
+  // out of the library's oxc type-aware lint pass.
+  lint: {
+    ignorePatterns: ["docs/**", "examples/nestjs/**"],
+    options: { typeAware: true, typeCheck: true },
+  },
   pack: {
     dts: { tsgo: true },
     exports: {
@@ -20,6 +25,7 @@ export default defineConfig({
       client: "src/client/index.ts",
       server: "src/server/index.ts",
       hono: "src/adapters/hono/index.ts",
+      nestjs: "src/adapters/nestjs/index.ts",
       typebox: "src/typebox/index.ts",
       openapi: "src/openapi/index.ts",
     },
