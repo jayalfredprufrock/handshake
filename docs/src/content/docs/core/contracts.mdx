@@ -7,7 +7,7 @@ A contract is the single source of truth for your API. It defines every endpoint
 
 ## Creating a Contract
 
-`createContract(basePath?, endpoints, options?)`. The base path prefixes all endpoint paths (defaults to `"/"`).
+Call it as `createContract(endpoints)`, `createContract(basePath, endpoints)`, or `createContract(basePath, endpoints, options)`. The base path prefixes all endpoint paths (defaults to `"/"`); passing `options` requires an explicit base path.
 
 ```ts
 import { createContract } from "@jayalfredprufrock/handshake/contract";
@@ -111,10 +111,22 @@ See [Error handling](/handshake/server/hono/#error-handling) for how the server 
 Pass `headers` at the contract level to require headers across **every** route — it's merged into each route's own `headers` (route headers win on conflict):
 
 ```ts
-const contract = createContract(endpoints, {
+const contract = createContract("/api", endpoints, {
   headers: Type.Object({ authorization: Type.String() }),
 });
 ```
+
+## Contract-level meta
+
+Pass `meta` at the contract level to set a default metadata object across **every** route — it's shallow-merged into each route's own `meta` (route keys win on conflict):
+
+```ts
+const contract = createContract("/api", endpoints, {
+  meta: { auth: true },
+});
+```
+
+A route that declares its own `meta` overrides the matching keys and adds any extra ones; a route without `meta` inherits the default as-is.
 
 ## Splitting Contracts Across Files
 
@@ -136,4 +148,4 @@ export const named = combineContracts(
 );
 ```
 
-Each endpoint's `path` is prefixed with its source contract's `basePath`, so the final URL is `topBasePath + subBasePath + endpointPath`. Duplicate endpoint names throw. The options object also accepts contract-wide `errors` and `headers`, which merge across all combined contracts.
+Each endpoint's `path` is prefixed with its source contract's `basePath`, so the final URL is `topBasePath + subBasePath + endpointPath`. Duplicate endpoint names throw. The options object also accepts contract-wide `errors`, `headers`, and a default `meta`, which merge across all combined routes (route-level values win on conflict).

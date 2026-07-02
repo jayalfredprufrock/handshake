@@ -69,6 +69,21 @@ describe("combineContracts", () => {
     expect(combined.endpoints.getUser.response).toBe(users.endpoints.getUser.response);
   });
 
+  test("merges a contract-level default meta into every combined route (route meta wins)", () => {
+    const admin = createContract("/admin", {
+      purge: { method: "DELETE", path: "/", response: T.Null(), meta: { auth: "admin" } },
+    });
+    const combined = combineContracts([users, admin], { meta: { auth: "user", tracked: true } });
+
+    // A route without its own meta inherits the default.
+    expect(combined.endpoints.getUser.meta).toEqual({ auth: "user", tracked: true });
+    // A route with its own meta overrides matching keys, keeps the rest.
+    expect(combined.endpoints.purge.meta).toEqual({ auth: "admin", tracked: true });
+
+    expectTypeOf(combined.endpoints.getUser.meta.tracked).toEqualTypeOf<true>();
+    expectTypeOf(combined.endpoints.purge.meta.auth).toEqualTypeOf<"admin">();
+  });
+
   test("throws on duplicate endpoint names", () => {
     const a = createContract("/a", {
       shared: {

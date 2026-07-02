@@ -2,7 +2,7 @@ import { type TArray, type TPartial, type TSchema } from "typebox";
 import * as T from "typebox";
 import { DeepOmit, DeepPick } from "../typebox";
 import type { DeepKeyOf, TDeepOmit, TDeepPick } from "../typebox";
-import type { EndpointMeta, MetaField } from "./create-contract";
+import type { EndpointMeta, Exact, MetaField } from "./create-contract";
 
 export type Merge2<A, B> = A extends readonly string[]
   ? B extends readonly string[]
@@ -74,7 +74,7 @@ export type CrudContract<T extends TSchema, C extends CrudContractConfig<T>> = {
 
 export const createCrud = <T extends TSchema, const C extends CrudContractConfig<T>>(
   schema: T,
-  config: C,
+  config: Exact<C, CrudContractConfig<T>>,
 ): CrudContract<T, C> => {
   const paramsPath =
     `/${config.params.map((param) => `:${param.toString()}`).join("/")}` as MakePath<

@@ -174,3 +174,34 @@ import {
   HandshakeExceptionFilter,
 } from "@jayalfredprufrock/handshake/nestjs";
 ```
+
+## Accessing the contract per request
+
+`@HandshakeHandler` stamps each route with its `HandshakeMeta` — the `contract`, `endpointName`, resolved `endpoint`, and per-handler `options` — under the `HANDSHAKE_META` reflector key. A **guard, interceptor, or pipe** can read it off the handler with Nest's `Reflector`:
+
+```ts
+import { Injectable } from "@nestjs/common";
+import type { CanActivate, ExecutionContext } from "@nestjs/common";
+import { Reflector } from "@nestjs/core";
+import { HANDSHAKE_META } from "@jayalfredprufrock/handshake/nestjs";
+import type { HandshakeMeta } from "@jayalfredprufrock/handshake/nestjs";
+
+@Injectable()
+export class ContractAwareGuard implements CanActivate {
+  constructor(private readonly reflector: Reflector) {}
+
+  canActivate(ctx: ExecutionContext): boolean {
+    const meta = this.reflector.get<HandshakeMeta | undefined>(HANDSHAKE_META, ctx.getHandler());
+    if (!meta) return true; // not a handshake route
+    const { contract, endpointName, endpoint } = meta;
+    // …inspect contract.errors, endpoint.method, endpoint.path, etc.
+    return true;
+  }
+}
+```
+
+A custom **exception filter** (or anything that runs after the interceptor) can instead read the same meta off the request via `HANDSHAKE_REQ_META`.
+
+:::caution[Not available in Nest middleware]
+Nest **middleware** runs at the HTTP-server layer, before the router matches a handler and before the interceptor. It has no `ExecutionContext` (so `Reflector` can't reach the route metadata) and `HANDSHAKE_REQ_META` is not yet set on the request. If you need the contract for a request, use a **guard or interceptor** instead of middleware.
+:::

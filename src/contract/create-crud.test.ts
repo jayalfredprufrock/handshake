@@ -95,3 +95,23 @@ describe("createCrud with a union schema (non-shared members)", () => {
     });
   });
 });
+
+describe("createCrud config validation", () => {
+  test("rejects unknown config properties (excess-property check)", () => {
+    createCrud(User, {
+      params: ["id"],
+      // @ts-expect-error `hiddenn` is a typo of `hidden`
+      hiddenn: ["password"],
+    });
+
+    createCrud(User, {
+      params: ["id"],
+      // @ts-expect-error `bogus` is not a valid crud config option
+      bogus: true,
+    });
+
+    // Arbitrary `meta` sub-keys remain unconstrained.
+    const crud = createCrud(User, { params: ["id"], meta: { auth: true, scope: "admin" } });
+    expect(crud.get.meta).toEqual({ auth: true, scope: "admin" });
+  });
+});

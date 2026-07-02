@@ -17,7 +17,13 @@ import type { HandshakeHandlerOptions, HandshakeMeta, HandshakeReturn } from "./
 export const HANDSHAKE_META = "handshake:meta";
 /** Request property where the interceptor stashes the parsed input for `@HandshakeReq()`. */
 export const HANDSHAKE_INPUT = Symbol.for("handshake:nestjs:input");
-/** Request property where the interceptor stashes the route meta for the filter. */
+/**
+ * Request property where the interceptor stashes the route {@link HandshakeMeta}.
+ * Available to any consumer that runs after the interceptor (e.g. an exception
+ * filter). In a guard or interceptor, prefer reading {@link HANDSHAKE_META} off
+ * the handler via `Reflector` instead — middleware runs before the interceptor,
+ * so this property is not yet set there.
+ */
 export const HANDSHAKE_REQ_META = Symbol.for("handshake:nestjs:req-meta");
 
 const VERB = { GET: Get, POST: Post, PATCH: Patch, DELETE: Delete } as const;

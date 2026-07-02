@@ -8,6 +8,7 @@ import { implementContract, createHonoApp } from "./index";
 describe("error handling", () => {
   test("ApiError pass-through when body matches a declared error", async () => {
     const contract = createContract(
+      "/",
       {
         getUser: {
           method: "GET",
@@ -38,6 +39,7 @@ describe("error handling", () => {
 
   test("ApiError pass-through for a manually thrown declared error", async () => {
     const contract = createContract(
+      "/",
       {
         getUser: {
           method: "GET",
@@ -68,6 +70,7 @@ describe("error handling", () => {
 
   test("ApiError pass-through with multiple declared statuses", async () => {
     const contract = createContract(
+      "/",
       {
         getUser: {
           method: "GET",
@@ -98,6 +101,7 @@ describe("error handling", () => {
 
   test("foreign error routes through onError", async () => {
     const contract = createContract(
+      "/",
       {
         getUser: {
           method: "GET",
@@ -131,6 +135,7 @@ describe("error handling", () => {
 
   test("ApiError thrown with an undeclared status routes through onError", async () => {
     const contract = createContract(
+      "/",
       {
         getUser: {
           method: "GET",
@@ -240,6 +245,7 @@ describe("error handling", () => {
 
   test("onError can still convert an HTTPException to a typed ApiError", async () => {
     const contract = createContract(
+      "/",
       {
         getUser: {
           method: "GET",
@@ -272,6 +278,7 @@ describe("error handling", () => {
 
   test("an ApiError thrown in middleware is serialized and passed through (no onError)", async () => {
     const contract = createContract(
+      "/",
       {
         getUser: {
           method: "GET",
@@ -328,6 +335,7 @@ describe("error handling", () => {
 
   test("an ApiError with an unrecognized code is treated as unknown", async () => {
     const contract = createContract(
+      "/",
       {
         getUser: {
           method: "GET",
@@ -565,6 +573,7 @@ describe("error handling", () => {
 
   test("merges contract-level headers into every route", async () => {
     const contract = createContract(
+      "/",
       {
         a: { method: "GET", path: "/a", response: T.Object({ ok: T.Boolean() }) },
         b: {

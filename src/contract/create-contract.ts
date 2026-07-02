@@ -147,10 +147,13 @@ export type ContractWithApi<
 export interface ContractOptions<
   E extends ErrorMap | undefined = undefined,
   H extends TSchema | undefined = undefined,
+  M extends EndpointMeta | undefined = undefined,
 > {
   errors?: E;
   /** Header schema merged into every route's own `headers` (route headers take precedence). */
   headers?: H;
+  /** Default meta merged into every route's own `meta` (route meta takes precedence). */
+  meta?: M;
 }
 
 /** Merges a contract-level header schema into a route's own header schema. */
@@ -180,6 +183,38 @@ export function applyContractHeaders(
     Object.entries(endpoints).map(([name, endpoint]) => [
       name,
       { ...endpoint, headers: endpoint.headers ? T.Composite(headers, endpoint.headers) : headers },
+    ]),
+  );
+}
+
+/** A route's own declared meta, or `undefined` when it declares none. */
+export type OwnMeta<E> = E extends { meta: infer O } ? O : undefined;
+
+/** Merges a contract-level default meta into a route's own meta (route meta wins). */
+export type MergeMeta<Base extends EndpointMeta, Route> = Route extends EndpointMeta
+  ? Omit<Base, keyof Route> & Route
+  : Base;
+
+/** Composes a contract-level default meta into every endpoint's `meta`. */
+export type WithContractMeta<
+  C extends Record<string, Endpoint>,
+  M extends EndpointMeta | undefined,
+> = M extends EndpointMeta
+  ? {
+      [K in keyof C]: Omit<C[K], "meta"> & { meta: MergeMeta<M, OwnMeta<C[K]>> };
+    }
+  : C;
+
+/** Composes a contract-level default meta into each endpoint at build time. */
+export function applyContractMeta(
+  endpoints: Record<string, Endpoint>,
+  meta: EndpointMeta | undefined,
+): Record<string, Endpoint> {
+  if (!meta) return endpoints;
+  return Object.fromEntries(
+    Object.entries(endpoints).map(([name, endpoint]) => [
+      name,
+      { ...endpoint, meta: endpoint.meta ? { ...meta, ...endpoint.meta } : meta },
     ]),
   );
 }
@@ -240,47 +275,56 @@ export function buildContract(
   return { basePath, endpoints, errors, named, error, isError } as ContractWithApi<any, any, any>;
 }
 
+/**
+ * Rejects properties outside `Shape` on `T` by mapping any unknown key to `never`.
+ * Inferring an argument into a generic skips the excess-property check TypeScript
+ * applies to a fixed annotation; wrapping the parameter in `Exact` reinstates it.
+ */
+export type Exact<T, Shape> = T & { [K in Exclude<keyof T, keyof Shape>]: never };
+
+/**
+ * Applies {@link Exact} to every endpoint literal in the map, so unknown endpoint
+ * properties are rejected. A `meta` object's own sub-keys are unaffected — only the
+ * endpoint's top-level keys are constrained.
+ */
+export type ExactEndpoints<C extends Record<string, Endpoint>> = {
+  [K in keyof C]: Exact<C[K], Endpoint>;
+};
+
 export function createContract<const C extends Record<string, Endpoint>>(
-  endpoints: C,
+  endpoints: ExactEndpoints<C>,
+): ContractWithApi<C, FrameworkEntries>;
+export function createContract<const C extends Record<string, Endpoint>>(
+  basePath: string,
+  endpoints: ExactEndpoints<C>,
 ): ContractWithApi<C, FrameworkEntries>;
 export function createContract<
   const C extends Record<string, Endpoint>,
   E extends ErrorMap | undefined = undefined,
   H extends TSchema | undefined = undefined,
->(
-  endpoints: C,
-  options: ContractOptions<E, H>,
-): ContractWithApi<WithContractHeaders<C, H>, ContractEntries<E>>;
-export function createContract<const C extends Record<string, Endpoint>>(
-  basePath: string,
-  endpoints: C,
-): ContractWithApi<C, FrameworkEntries>;
-export function createContract<
-  const C extends Record<string, Endpoint>,
-  E extends ErrorMap | undefined = undefined,
-  H extends TSchema | undefined = undefined,
+  const M extends EndpointMeta | undefined = undefined,
 >(
   basePath: string,
-  endpoints: C,
-  options: ContractOptions<E, H>,
-): ContractWithApi<WithContractHeaders<C, H>, ContractEntries<E>>;
+  endpoints: ExactEndpoints<C>,
+  options: ContractOptions<E, H, M>,
+): ContractWithApi<WithContractMeta<WithContractHeaders<C, H>, M>, ContractEntries<E>>;
 export function createContract(
   basePathOrEndpoints: string | Record<string, Endpoint>,
-  endpointsOrOptions?: Record<string, Endpoint> | ContractOptions<any, any>,
-  maybeOptions?: ContractOptions<any, any>,
+  endpointsOrOptions?: Record<string, Endpoint> | ContractOptions<any, any, any>,
+  maybeOptions?: ContractOptions<any, any, any>,
 ): any {
   if (typeof basePathOrEndpoints === "string") {
     const endpoints = endpointsOrOptions as Record<string, Endpoint>;
     return buildContract(
       basePathOrEndpoints,
-      applyContractHeaders(endpoints, maybeOptions?.headers),
+      applyContractMeta(applyContractHeaders(endpoints, maybeOptions?.headers), maybeOptions?.meta),
       maybeOptions?.errors,
     );
   }
-  const options = endpointsOrOptions as ContractOptions<any, any> | undefined;
+  const options = endpointsOrOptions as ContractOptions<any, any, any> | undefined;
   return buildContract(
     "/",
-    applyContractHeaders(basePathOrEndpoints, options?.headers),
+    applyContractMeta(applyContractHeaders(basePathOrEndpoints, options?.headers), options?.meta),
     options?.errors,
   );
 }

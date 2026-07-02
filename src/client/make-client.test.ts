@@ -239,6 +239,7 @@ describe("createFetchClient hooks", () => {
 
   test("retry recovers from a typed error via contract.isError", async () => {
     const contract = createContract(
+      "/",
       { me: { method: "GET", path: "/me", response: T.Object({ id: T.String() }) } },
       { errors: { TOKEN_EXPIRED: { status: 401 } } },
     );

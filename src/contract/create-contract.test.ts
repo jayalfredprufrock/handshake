@@ -52,8 +52,37 @@ describe("createContract", () => {
     expect(endpoint.body).toBeDefined();
   });
 
+  test("merges contract-level default meta into every endpoint (route meta wins)", () => {
+    const contract = createContract(
+      "/api",
+      {
+        open: { method: "GET", path: "/open", response: T.Null() },
+        locked: {
+          method: "GET",
+          path: "/locked",
+          response: T.Null(),
+          meta: { auth: false, extra: 1 },
+        },
+      },
+      { meta: { auth: true, tag: "x" } },
+    );
+
+    // Endpoint without its own meta inherits the default.
+    expect(contract.endpoints.open.meta).toEqual({ auth: true, tag: "x" });
+    // Route meta wins on conflict (`auth`), keeps default `tag`, adds its own `extra`.
+    expect(contract.endpoints.locked.meta).toEqual({ auth: false, tag: "x", extra: 1 });
+
+    // Types reflect the merge (per-property; values stay literal, like route-level meta).
+    expectTypeOf(contract.endpoints.open.meta.auth).toEqualTypeOf<true>();
+    expectTypeOf(contract.endpoints.open.meta.tag).toEqualTypeOf<"x">();
+    expectTypeOf(contract.endpoints.locked.meta.auth).toEqualTypeOf<false>(); // route wins
+    expectTypeOf(contract.endpoints.locked.meta.tag).toEqualTypeOf<"x">(); // inherited default
+    expectTypeOf(contract.endpoints.locked.meta.extra).toEqualTypeOf<1>(); // route's own
+  });
+
   test("stores the errors map", () => {
     const contract = createContract(
+      "/",
       { ping: { method: "GET", path: "/", response: T.Null() } },
       { errors },
     );
@@ -63,16 +92,63 @@ describe("createContract", () => {
   test("throws when a reserved framework code is declared", () => {
     expect(() =>
       createContract(
+        "/",
         { ping: { method: "GET", path: "/", response: T.Null() } },
         { errors: { VALIDATION_ERROR: { status: 400 } } },
       ),
     ).toThrow(/reserved/);
     expect(() =>
       createContract(
+        "/",
         { ping: { method: "GET", path: "/", response: T.Null() } },
         { errors: { UNKNOWN_ERROR: { status: 500 } } },
       ),
     ).toThrow(/reserved/);
+  });
+
+  test("rejects unknown endpoint properties (excess-property check)", () => {
+    createContract({
+      getUser: {
+        method: "GET",
+        path: "/users/:id",
+        response: T.Object({ id: T.String() }),
+        // @ts-expect-error `bogus` is not a valid endpoint property
+        bogus: 123,
+      },
+    });
+
+    createContract({
+      getUser: {
+        method: "GET",
+        path: "/users/:id",
+        response: T.Object({ id: T.String() }),
+        // @ts-expect-error `responseCod` is a typo of `responseCode`
+        responseCod: 201,
+      },
+    });
+
+    // The basePath form rejects excess properties precisely too (a single
+    // overload has arity 2, so there is no ambiguous "no overload matches").
+    createContract("/api", {
+      getUser: {
+        method: "GET",
+        path: "/users/:id",
+        response: T.Object({ id: T.String() }),
+        // @ts-expect-error `bogus` is not a valid endpoint property
+        bogus: 123,
+      },
+    });
+
+    // Arbitrary `meta` sub-keys remain unconstrained.
+    const ok = createContract({
+      getUser: {
+        method: "GET",
+        path: "/users/:id",
+        response: T.Object({ id: T.String() }),
+        meta: { auth: true, anything: "goes" },
+      },
+    });
+    expect(ok.endpoints.getUser.meta).toEqual({ auth: true, anything: "goes" });
   });
 });
 
@@ -107,6 +183,7 @@ describe("makeErrorFactory (standalone)", () => {
   test("the same map shared with createContract yields matching codes/statuses", () => {
     const error = makeErrorFactory(errors);
     const contract = createContract(
+      "/",
       { create: { method: "POST", path: "/", response: T.Null() } },
       { errors },
     );
@@ -131,6 +208,7 @@ describe("makeErrorFactory (standalone)", () => {
 
 describe("contract.error", () => {
   const contract = createContract(
+    "/",
     { create: { method: "POST", path: "/", response: T.Null() } },
     { errors },
   );
@@ -164,6 +242,7 @@ describe("contract.error", () => {
 
 describe("contract.isError", () => {
   const contract = createContract(
+    "/",
     { create: { method: "POST", path: "/", response: T.Null() } },
     { errors },
   );
@@ -268,6 +347,7 @@ describe("framework error codes (always available)", () => {
   test("reserved codes still cannot be declared in the error map", () => {
     expect(() =>
       createContract(
+        "/",
         { y: { method: "GET", path: "/", response: T.Null() } },
         { errors: { VALIDATION_ERROR: { status: 400 } } },
       ),
