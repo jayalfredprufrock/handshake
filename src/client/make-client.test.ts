@@ -408,4 +408,20 @@ describe("client typing", () => {
       void client.plain(); // no query → options optional
     });
   });
+
+  test("excludes internal endpoints from the client (type and runtime)", () => {
+    const contract = createContract("/api", {
+      listCats: { method: "GET", path: "/cats", response: T.Array(T.Object({ id: T.String() })) },
+      purgeCats: { method: "DELETE", path: "/cats", response: T.Null(), internal: true },
+    });
+    const client = createFetchClient(contract, { fetch: okFetch([]), baseUrl: "https://x.com" });
+
+    // Runtime: the internal endpoint is not attached.
+    expect("listCats" in client).toBe(true);
+    expect("purgeCats" in client).toBe(false);
+
+    // Type: the internal endpoint is not part of the client surface.
+    expectTypeOf(client).toHaveProperty("listCats");
+    expectTypeOf(client).not.toHaveProperty("purgeCats");
+  });
 });

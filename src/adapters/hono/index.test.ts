@@ -133,10 +133,10 @@ describe("hono adapter", () => {
 
     test("routes named groups at their basePaths", async () => {
       const { combineContracts } = await import("../../contract");
-      const combined = combineContracts(
-        { users: usersContract, posts: postsContract },
-        { basePath: "/api" },
-      );
+      const combined = combineContracts("/api", {
+        users: usersContract,
+        posts: postsContract,
+      });
 
       const usersModule = implementContract(combined, "users", {
         getUser: ({ params }) => ({ id: params.id, name: "Alice" }),
@@ -153,7 +153,7 @@ describe("hono adapter", () => {
 
     test("named group closure form with middleware", async () => {
       const { combineContracts } = await import("../../contract");
-      const combined = combineContracts({ users: usersContract }, { basePath: "/api" });
+      const combined = combineContracts("/api", { users: usersContract });
 
       const headerValues: string[] = [];
       const usersModule = implementContract(combined, "users", (group) => {

@@ -157,4 +157,14 @@ describe("generateOpenApi", () => {
     const out = generateOpenApi(c, { info: { title: "x", version: "1" } });
     expect((out.paths!["/ping"]!.get! as any).tags).toEqual(["health"]);
   });
+
+  test("omits internal endpoints", () => {
+    const c = createContract("/api", {
+      publicPing: { method: "GET", path: "/ping", response: T.Null() },
+      secretPurge: { method: "DELETE", path: "/purge", response: T.Null(), internal: true },
+    });
+    const out = generateOpenApi(c, { info: { title: "x", version: "1" } });
+    expect(out.paths).toHaveProperty(["/api/ping"]);
+    expect(out.paths).not.toHaveProperty(["/api/purge"]);
+  });
 });

@@ -33,13 +33,13 @@ describe("combineContracts", () => {
     expect(combined.basePath).toBe("/");
   });
 
-  test("accepts an explicit basePath option", () => {
-    const combined = combineContracts([users, posts], { basePath: "/api" });
+  test("accepts an explicit basePath argument", () => {
+    const combined = combineContracts("/api", [users, posts]);
     expect(combined.basePath).toBe("/api");
   });
 
   test("prefixes sub-contract basePath into each endpoint path", () => {
-    const combined = combineContracts([users, posts], { basePath: "/api" });
+    const combined = combineContracts("/api", [users, posts]);
     expect(combined.endpoints.getUser.path).toBe("/users/:id");
     expect(combined.endpoints.listUsers.path).toBe("/users");
     expect(combined.endpoints.getPost.path).toBe("/posts/:id");
@@ -73,7 +73,9 @@ describe("combineContracts", () => {
     const admin = createContract("/admin", {
       purge: { method: "DELETE", path: "/", response: T.Null(), meta: { auth: "admin" } },
     });
-    const combined = combineContracts([users, admin], { meta: { auth: "user", tracked: true } });
+    const combined = combineContracts("/", [users, admin], {
+      meta: { auth: "user", tracked: true },
+    });
 
     // A route without its own meta inherits the default.
     expect(combined.endpoints.getUser.meta).toEqual({ auth: "user", tracked: true });
@@ -114,7 +116,7 @@ describe("combineContracts", () => {
       { errors: { CONFLICT: { status: 409, details: T.Object({ conflictingId: T.String() }) } } },
     );
 
-    const combined = combineContracts([a, b], {
+    const combined = combineContracts("/", [a, b], {
       errors: { UNAUTHORIZED: { status: 401 } },
     });
 
@@ -200,7 +202,7 @@ describe("combineContracts", () => {
       // entry is `never`. EntryOf must not widen that `never` to `ErrorEntry`,
       // which previously collapsed the code union to `string` and let any code
       // through.
-      const combined = combineContracts([users, posts], {
+      const combined = combineContracts("/", [users, posts], {
         errors: { UNAUTHORIZED: { status: 401 } },
       });
 

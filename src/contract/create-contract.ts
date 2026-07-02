@@ -21,6 +21,12 @@ export type Endpoint = {
   /** Request header schema. Header names must be declared in lowercase. */
   headers?: TSchema;
   description?: string;
+  /**
+   * Marks the endpoint as server-only. It is still implemented and served by the
+   * adapters, but is excluded from the generated fetch client and the OpenAPI
+   * document.
+   */
+  internal?: boolean;
 } & MetaField<EndpointMeta>;
 
 /** A single declared error: its HTTP status and an optional `details` schema. */

@@ -455,7 +455,7 @@ describe("error handling", () => {
       { errors: { NOT_FOUND: { status: 404 } } },
     );
 
-    const combined = combineContracts([users], {
+    const combined = combineContracts("/", [users], {
       errors: { INTERNAL_ERROR: { status: 500 } },
     });
 
@@ -489,6 +489,7 @@ describe("error handling", () => {
     });
 
     const combined = combineContracts(
+      "/",
       { users },
       {
         errors: { INTERNAL_ERROR: { status: 500 } },

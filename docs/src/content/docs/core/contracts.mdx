@@ -69,6 +69,19 @@ headers: Type.Object({ "x-api-key": Type.String() });
 
 **Optional.** A human-readable description and an arbitrary metadata object for documentation or custom tooling.
 
+### `internal`
+
+**Optional.** Marks the endpoint as **server-only**. The server adapters still implement and serve it, but it is excluded from the generated fetch client (both its type and the runtime object) and from the OpenAPI document — useful for endpoints that should only be called from other trusted services, not exposed to client consumers.
+
+```ts
+purgeCache: {
+  method: "DELETE",
+  path: "/cache",
+  response: Type.Null(),
+  internal: true,
+}
+```
+
 ## Errors
 
 Errors are declared once on the contract as a **code-keyed map**. Each `code` maps to its HTTP `status` and an optional `details` schema. Errors are **contract-wide** (any endpoint may return any of them):
@@ -139,13 +152,13 @@ import { usersContract } from "./users";
 import { postsContract } from "./posts";
 
 // array form (no named groups)
-export const contract = combineContracts([usersContract, postsContract], { basePath: "/api" });
+export const contract = combineContracts("/api", [usersContract, postsContract]);
 
 // named-object form — keys become group names used by implementContract
-export const named = combineContracts(
-  { users: usersContract, posts: postsContract },
-  { basePath: "/api" },
-);
+export const named = combineContracts("/api", {
+  users: usersContract,
+  posts: postsContract,
+});
 ```
 
-Each endpoint's `path` is prefixed with its source contract's `basePath`, so the final URL is `topBasePath + subBasePath + endpointPath`. Duplicate endpoint names throw. The options object also accepts contract-wide `errors`, `headers`, and a default `meta`, which merge across all combined routes (route-level values win on conflict).
+Like `createContract`, the base path is the optional first argument (defaults to `"/"`); passing options requires an explicit base path. Each endpoint's `path` is prefixed with its source contract's `basePath`, so the final URL is `topBasePath + subBasePath + endpointPath`. Duplicate endpoint names throw. The options object also accepts contract-wide `errors`, `headers`, and a default `meta`, which merge across all combined routes (route-level values win on conflict).

@@ -121,7 +121,9 @@ export interface FetchClientConfig {
 
 export type ClientOf<Ct extends Contract<any, any, any>> =
   Ct extends Contract<infer C, any, any>
-    ? { [E in keyof C]: C[E] & ClientEndpoint<C[E]> } & { $contract: Ct }
+    ? {
+        [E in keyof C as C[E]["internal"] extends true ? never : E]: C[E] & ClientEndpoint<C[E]>;
+      } & { $contract: Ct }
     : never;
 
 const extractArgs = (endpoint: Endpoint, args: any[]) => {
@@ -334,6 +336,7 @@ export const createFetchClient = <Ct extends Contract<any, any, any>>(
   const client: Record<string, unknown> = { $contract: contract };
 
   for (const [name, endpoint] of Object.entries(contract.endpoints as Record<string, Endpoint>)) {
+    if (endpoint.internal) continue;
     const func = (...args: any[]) => {
       const { body, options, params } = extractArgs(endpoint, args);
       const path = `${config.baseUrl}${basePath}${replacePathParams(endpoint.path, params)}`;

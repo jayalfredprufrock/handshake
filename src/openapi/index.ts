@@ -255,6 +255,7 @@ export function generateOpenApi(
 
   const paths: Record<string, OpenAPIV3_1.PathItemObject> = {};
   for (const [name, endpoint] of Object.entries(contract.endpoints as Record<string, Endpoint>)) {
+    if (endpoint.internal) continue;
     const path = toOpenApiPath(joinPath(contract.basePath, endpoint.path));
     const item = (paths[path] ??= {});
     const method = endpoint.method.toLowerCase() as Lowercase<Endpoint["method"]>;
