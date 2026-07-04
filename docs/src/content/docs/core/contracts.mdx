@@ -69,6 +69,24 @@ headers: Type.Object({ "x-api-key": Type.String() });
 
 **Optional.** A human-readable description and an arbitrary metadata object for documentation or custom tooling.
 
+By default `meta` accepts any object. To type it, augment the exported `EndpointMeta` interface via declaration merging — target the **`/contract`** subpath (where the interface ships):
+
+```ts
+declare module "@jayalfredprufrock/handshake/contract" {
+  interface EndpointMeta {
+    auth: boolean; // required
+    scope?: string; // optional
+  }
+}
+```
+
+With that in place:
+
+- **Declared keys are typed** everywhere `meta` is read — `endpoint.meta.auth` is `boolean`, `meta.scope` is `string | undefined`.
+- **A required key makes `meta` required on every endpoint.** Declaring `auth: boolean` (no `?`) means an endpoint with no `meta`, or a `meta` missing `auth`, is a compile error. Declare keys as optional (`auth?`) to keep `meta` itself optional.
+- **Extra keys are still allowed.** `EndpointMeta` extends `Record<string, any>`, so augmentation is additive — you can still attach ad-hoc keys beyond the ones you declared.
+- **Contract-level default `meta`** (below) is typed against this same interface.
+
 ### `internal`
 
 **Optional.** Marks the endpoint as **server-only**. The server adapters still implement and serve it, but it is excluded from the generated fetch client (both its type and the runtime object) and from the OpenAPI document — useful for endpoints that should only be called from other trusted services, not exposed to client consumers.

@@ -18,13 +18,34 @@
   "type": "module",
   "sideEffects": false,
   "exports": {
-    "./client": "./src/client/index.ts",
-    "./contract": "./src/contract/index.ts",
-    "./hono": "./src/adapters/hono/index.ts",
-    "./nestjs": "./src/adapters/nestjs/index.ts",
-    "./openapi": "./src/openapi/index.ts",
-    "./server": "./src/server/index.ts",
-    "./typebox": "./src/typebox/index.ts",
+    "./client": {
+      "import": "./dist/client.mjs",
+      "require": "./dist/client.cjs"
+    },
+    "./contract": {
+      "import": "./dist/contract.mjs",
+      "require": "./dist/contract.cjs"
+    },
+    "./hono": {
+      "import": "./dist/hono.mjs",
+      "require": "./dist/hono.cjs"
+    },
+    "./nestjs": {
+      "import": "./dist/nestjs.mjs",
+      "require": "./dist/nestjs.cjs"
+    },
+    "./openapi": {
+      "import": "./dist/openapi.mjs",
+      "require": "./dist/openapi.cjs"
+    },
+    "./server": {
+      "import": "./dist/server.mjs",
+      "require": "./dist/server.cjs"
+    },
+    "./typebox": {
+      "import": "./dist/typebox.mjs",
+      "require": "./dist/typebox.cjs"
+    },
     "./package.json": "./package.json"
   },
   "publishConfig": {

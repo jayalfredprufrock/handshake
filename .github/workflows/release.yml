@@ -32,6 +32,9 @@ jobs:
       - name: Test
         run: vp check && vp test
 
+      - name: Type-check examples against dist
+        run: vp run check:examples
+
       - name: Build
         run: vp pack
 
