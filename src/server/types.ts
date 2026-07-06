@@ -26,6 +26,6 @@ export interface AdapterTestHarness {
 }
 
 export type AdapterFactory = (
-  contract: Contract<any, any, any>,
+  contract: Contract<any, any>,
   options?: AdapterOptions,
 ) => AdapterTestHarness;

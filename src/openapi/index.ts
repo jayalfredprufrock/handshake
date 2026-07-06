@@ -1,5 +1,5 @@
 import type { OpenAPIV3_1 } from "openapi-types";
-import type { Contract, Endpoint, ErrorMap } from "../contract";
+import type { Api, Endpoint, ErrorMap } from "../contract";
 import { HANDSHAKE_ERROR_KIND, joinPath } from "../contract";
 import { SchemaRegistry } from "./schema";
 import type { Schema } from "./schema";
@@ -177,22 +177,19 @@ function metaExtensions(meta: unknown): Record<string, unknown> {
   return out;
 }
 
-function buildTagIndex(contract: Contract<any, any, any>): {
+function buildTagIndex(api: Api<any, any>): {
   topTags: OpenAPIV3_1.TagObject[];
   tagFor: (endpointName: string) => string | undefined;
 } {
-  const named = contract.named as
-    | Record<string, { endpoints?: Record<string, unknown> }>
-    | undefined;
-  if (!named) return { topTags: [], tagFor: () => undefined };
+  const groups = api.contracts as Record<string, { endpoints?: Record<string, unknown> }>;
   const endpointToGroup = new Map<string, string>();
-  for (const [group, sub] of Object.entries(named)) {
+  for (const [group, sub] of Object.entries(groups)) {
     for (const endpointName of Object.keys(sub.endpoints ?? {})) {
       endpointToGroup.set(endpointName, group);
     }
   }
   return {
-    topTags: Object.keys(named).map((name) => ({ name })),
+    topTags: Object.keys(groups).map((name) => ({ name })),
     tagFor: (endpointName) => endpointToGroup.get(endpointName),
   };
 }
@@ -246,17 +243,17 @@ function buildOperation(
  * `components`; every operation documents the contract's full error set.
  */
 export function generateOpenApi(
-  contract: Contract<any, any, any>,
+  api: Api<any, any>,
   options: GenerateOpenApiOptions,
 ): OpenAPIV3_1.Document {
   const registry = new SchemaRegistry();
-  const { responses, refsByStatus } = buildErrorResponses(contract.errors, registry);
-  const { topTags, tagFor } = buildTagIndex(contract);
+  const { responses, refsByStatus } = buildErrorResponses(api.errors, registry);
+  const { topTags, tagFor } = buildTagIndex(api);
 
   const paths: Record<string, OpenAPIV3_1.PathItemObject> = {};
-  for (const [name, endpoint] of Object.entries(contract.endpoints as Record<string, Endpoint>)) {
+  for (const [name, endpoint] of Object.entries(api.endpoints as Record<string, Endpoint>)) {
     if (endpoint.internal) continue;
-    const path = toOpenApiPath(joinPath(contract.basePath, endpoint.path));
+    const path = toOpenApiPath(joinPath(api.basePath, endpoint.path));
     const item = (paths[path] ??= {});
     const method = endpoint.method.toLowerCase() as Lowercase<Endpoint["method"]>;
     (item as Record<string, OpenAPIV3_1.OperationObject>)[method] = buildOperation(

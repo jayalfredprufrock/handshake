@@ -1,9 +1,9 @@
 import { describe, expect, test } from "vite-plus/test";
 import * as T from "typebox";
 import { HTTPException } from "hono/http-exception";
-import { createContract, combineContracts, ApiError } from "../../contract";
+import { ApiError, createApi, createContract } from "../../contract";
 import { ResponseValidationError } from "../../server";
-import { implementContract, createHonoApp } from "./index";
+import { buildRoutes, createHonoApp } from "./index";
 
 describe("error handling", () => {
   test("ApiError pass-through when body matches a declared error", async () => {
@@ -20,12 +20,13 @@ describe("error handling", () => {
       { errors: { NOT_FOUND: { status: 404 } } },
     );
 
-    const module = implementContract(contract, {
+    const api = createApi("/", { main: contract });
+    const routes = buildRoutes(api, "main", {
       getUser: () => {
-        throw contract.error("NOT_FOUND", "user not found");
+        throw api.error("NOT_FOUND", "user not found");
       },
     });
-    const app = createHonoApp([module]);
+    const app = createHonoApp({ routes: [routes] });
 
     const res = await app.request("/users/1");
     expect(res.status).toBe(404);
@@ -51,12 +52,13 @@ describe("error handling", () => {
       { errors: { UNAUTHORIZED: { status: 401 } } },
     );
 
-    const module = implementContract(contract, {
+    const api = createApi("/", { main: contract });
+    const routes = buildRoutes(api, "main", {
       getUser: () => {
         throw new ApiError({ code: "UNAUTHORIZED", status: 401, message: "missing token" });
       },
     });
-    const app = createHonoApp([module]);
+    const app = createHonoApp({ routes: [routes] });
 
     const res = await app.request("/users/1");
     expect(res.status).toBe(401);
@@ -82,12 +84,13 @@ describe("error handling", () => {
       { errors: { UNAUTHORIZED: { status: 401 }, NOT_FOUND: { status: 404 } } },
     );
 
-    const module = implementContract(contract, {
+    const api = createApi("/", { main: contract });
+    const routes = buildRoutes(api, "main", {
       getUser: () => {
-        throw contract.error("NOT_FOUND", "user not found");
+        throw api.error("NOT_FOUND", "user not found");
       },
     });
-    const app = createHonoApp([module]);
+    const app = createHonoApp({ routes: [routes] });
 
     const res = await app.request("/users/1");
     expect(res.status).toBe(404);
@@ -113,12 +116,14 @@ describe("error handling", () => {
       { errors: { INTERNAL_ERROR: { status: 500 } } },
     );
 
-    const module = implementContract(contract, {
+    const api = createApi("/", { main: contract });
+    const routes = buildRoutes(api, "main", {
       getUser: () => {
         throw new Error("Database connection failed");
       },
     });
-    const app = createHonoApp([module], {
+    const app = createHonoApp({
+      routes: [routes],
       onError: () =>
         new ApiError({ code: "INTERNAL_ERROR", status: 500, message: "internal error" }),
     });
@@ -147,12 +152,14 @@ describe("error handling", () => {
       { errors: { NOT_FOUND: { status: 404 }, INTERNAL_ERROR: { status: 500 } } },
     );
 
-    const module = implementContract(contract, {
+    const api = createApi("/", { main: contract });
+    const routes = buildRoutes(api, "main", {
       getUser: () => {
         throw new ApiError({ code: "FORBIDDEN", status: 403 });
       },
     });
-    const app = createHonoApp([module], {
+    const app = createHonoApp({
+      routes: [routes],
       onError: () =>
         new ApiError({ code: "INTERNAL_ERROR", status: 500, message: "internal error" }),
     });
@@ -177,12 +184,13 @@ describe("error handling", () => {
       },
     });
 
-    const module = implementContract(contract, {
+    const api = createApi("/", { main: contract });
+    const routes = buildRoutes(api, "main", {
       getUser: () => {
         throw new Error("unhandled");
       },
     });
-    const app = createHonoApp([module]);
+    const app = createHonoApp({ routes: [routes] });
 
     const res = await app.request("/users/1");
     expect(res.status).toBe(500);
@@ -204,12 +212,13 @@ describe("error handling", () => {
       },
     });
 
-    const module = implementContract(contract, {
+    const api = createApi("/", { main: contract });
+    const routes = buildRoutes(api, "main", {
       getUser: () => {
         throw new Error("boom");
       },
     });
-    const app = createHonoApp([module], { onError: () => undefined });
+    const app = createHonoApp({ routes: [routes], onError: () => undefined });
 
     const res = await app.request("/users/1");
     expect(res.status).toBe(500);
@@ -230,13 +239,14 @@ describe("error handling", () => {
         response: T.Object({ id: T.String() }),
       },
     });
+    const api = createApi("/", { main: contract });
     // e.g. a middleware (bearer auth) or the framework throwing an HTTPException
-    const module = implementContract(contract, {
+    const routes = buildRoutes(api, "main", {
       getUser: () => {
         throw new HTTPException(401, { message: "no token" });
       },
     });
-    const app = createHonoApp([module]);
+    const app = createHonoApp({ routes: [routes] });
 
     const res = await app.request("/users/1");
     expect(res.status).toBe(401); // not collapsed to 500
@@ -256,14 +266,16 @@ describe("error handling", () => {
       },
       { errors: { UNAUTHORIZED: { status: 401 } } },
     );
-    const module = implementContract(contract, {
+    const api = createApi("/", { main: contract });
+    const routes = buildRoutes(api, "main", {
       getUser: () => {
         throw new HTTPException(401, { message: "no token" });
       },
     });
-    const app = createHonoApp([module], {
+    const app = createHonoApp({
+      routes: [routes],
       onError: (err) =>
-        err instanceof HTTPException ? contract.error("UNAUTHORIZED", err.message) : undefined,
+        err instanceof HTTPException ? api.error("UNAUTHORIZED", err.message) : undefined,
     });
 
     const res = await app.request("/users/1");
@@ -289,13 +301,14 @@ describe("error handling", () => {
       },
       { errors: { NOT_FOUND: { status: 404 } } },
     );
-    const module = implementContract(contract, (group) => {
+    const api = createApi("/", { main: contract });
+    const routes = buildRoutes(api, "main", (group) => {
       group.use(async () => {
-        throw contract.error("NOT_FOUND", "from middleware");
+        throw api.error("NOT_FOUND", "from middleware");
       });
       group.implement("getUser", ({ params }) => ({ id: params.id }));
     });
-    const app = createHonoApp([module]);
+    const app = createHonoApp({ routes: [routes] });
 
     const res = await app.request("/users/1");
     expect(res.status).toBe(404);
@@ -316,12 +329,13 @@ describe("error handling", () => {
         response: T.Object({ id: T.String() }),
       },
     });
-    const module = implementContract(contract, {
+    const api = createApi("/", { main: contract });
+    const routes = buildRoutes(api, "main", {
       getUser: () => {
-        throw contract.error("VALIDATION_ERROR", "Phone invalid");
+        throw api.error("VALIDATION_ERROR", "Phone invalid");
       },
     });
-    const app = createHonoApp([module]);
+    const app = createHonoApp({ routes: [routes] });
 
     const res = await app.request("/users/1");
     expect(res.status).toBe(400);
@@ -346,28 +360,30 @@ describe("error handling", () => {
       },
       { errors: { NOT_FOUND: { status: 404 } } },
     );
+    const api = createApi("/", { main: contract });
 
     // No hook → an unrecognized code collapses to UNKNOWN_ERROR.
-    const m1 = implementContract(contract, {
+    const r1 = buildRoutes(api, "main", {
       getUser: () => {
         throw new ApiError({ code: "TEAPOT", status: 418, message: "nope" });
       },
     });
-    const res1 = await createHonoApp([m1]).request("/users/1");
+    const res1 = await createHonoApp({ routes: [r1] }).request("/users/1");
     expect(res1.status).toBe(500);
     expect(((await res1.json()) as { code: string }).code).toBe("UNKNOWN_ERROR");
 
     // The hook receives the unrecognized ApiError and can map it to a known one.
     let seen: string | undefined;
-    const m2 = implementContract(contract, {
+    const r2 = buildRoutes(api, "main", {
       getUser: () => {
         throw new ApiError({ code: "TEAPOT", status: 418, message: "nope" });
       },
     });
-    const res2 = await createHonoApp([m2], {
+    const res2 = await createHonoApp({
+      routes: [r2],
       onError: (err) => {
         if (err instanceof ApiError) seen = err.code;
-        return contract.error("NOT_FOUND", "mapped");
+        return api.error("NOT_FOUND", "mapped");
       },
     }).request("/users/1");
     expect(seen).toBe("TEAPOT");
@@ -384,8 +400,9 @@ describe("error handling", () => {
         response: T.Object({ id: T.String() }),
       },
     });
-    const module = implementContract(contract, { createUser: () => ({ id: "1" }) });
-    const app = createHonoApp([module]);
+    const api = createApi("/", { main: contract });
+    const routes = buildRoutes(api, "main", { createUser: () => ({ id: "1" }) });
+    const app = createHonoApp({ routes: [routes] });
 
     const res = await app.request("/users", {
       method: "POST",
@@ -415,14 +432,16 @@ describe("error handling", () => {
         response: T.Object({ id: T.String() }),
       },
     });
+    const api = createApi("/", { main: contract });
 
     // handler returns a response that violates the schema (id should be a string)
-    const module = implementContract(contract, {
+    const routes = buildRoutes(api, "main", {
       getUser: () => ({ id: 123 }) as any,
     });
 
     let seenIssues: unknown;
-    const app = createHonoApp([module], {
+    const app = createHonoApp({
+      routes: [routes],
       onError: (err) => {
         if (err instanceof ResponseValidationError) {
           seenIssues = err.issues; // log / alert on the real reason
@@ -455,16 +474,15 @@ describe("error handling", () => {
       { errors: { NOT_FOUND: { status: 404 } } },
     );
 
-    const combined = combineContracts("/", [users], {
-      errors: { INTERNAL_ERROR: { status: 500 } },
-    });
+    const api = createApi("/", { users }, { errors: { INTERNAL_ERROR: { status: 500 } } });
 
-    const module = implementContract(combined, {
+    const routes = buildRoutes(api, "users", {
       getUser: () => {
         throw new Error("db error");
       },
     });
-    const app = createHonoApp([module], {
+    const app = createHonoApp({
+      routes: [routes],
       onError: () => new ApiError({ code: "INTERNAL_ERROR", status: 500 }),
     });
 
@@ -488,20 +506,15 @@ describe("error handling", () => {
       },
     });
 
-    const combined = combineContracts(
-      "/",
-      { users },
-      {
-        errors: { INTERNAL_ERROR: { status: 500 } },
-      },
-    );
+    const api = createApi("/", { users }, { errors: { INTERNAL_ERROR: { status: 500 } } });
 
-    const module = implementContract(combined, "users", {
+    const routes = buildRoutes(api, "users", {
       getUser: () => {
         throw new Error("db error");
       },
     });
-    const app = createHonoApp([module], {
+    const app = createHonoApp({
+      routes: [routes],
       onError: () => new ApiError({ code: "INTERNAL_ERROR", status: 500 }),
     });
 
@@ -531,11 +544,12 @@ describe("error handling", () => {
       },
     });
 
-    const module = implementContract(contract, {
+    const api = createApi("/", { main: contract });
+    const routes = buildRoutes(api, "main", {
       createUser: () => ({ id: "1" }),
       listUsers: () => [],
     });
-    const app = createHonoApp([module]);
+    const app = createHonoApp({ routes: [routes] });
 
     const created = await app.request("/users", {
       method: "POST",
@@ -558,10 +572,11 @@ describe("error handling", () => {
         response: T.Object({ key: T.String() }),
       },
     });
-    const module = implementContract(contract, {
+    const api = createApi("/", { main: contract });
+    const routes = buildRoutes(api, "main", {
       secret: ({ headers }) => ({ key: headers["x-api-key"] }),
     });
-    const app = createHonoApp([module]);
+    const app = createHonoApp({ routes: [routes] });
 
     const ok = await app.request("/secret", { headers: { "x-api-key": "abc" } });
     expect(ok.status).toBe(200);
@@ -586,11 +601,12 @@ describe("error handling", () => {
       },
       { headers: T.Object({ "x-tenant": T.String() }) },
     );
-    const module = implementContract(contract, {
+    const api = createApi("/", { main: contract });
+    const routes = buildRoutes(api, "main", {
       a: ({ headers }) => ({ ok: Boolean(headers["x-tenant"]) }),
       b: ({ headers }) => ({ ok: Boolean(headers["x-tenant"] && headers["x-extra"]) }),
     });
-    const app = createHonoApp([module]);
+    const app = createHonoApp({ routes: [routes] });
 
     // route `a` inherits the contract-level header
     expect((await app.request("/a", { headers: { "x-tenant": "t1" } })).status).toBe(200);
@@ -603,7 +619,7 @@ describe("error handling", () => {
     expect((await app.request("/b", { headers: { "x-tenant": "t1" } })).status).toBe(400);
   });
 
-  test("throws at implementContract time when a handler is missing", () => {
+  test("throws at build time when a handler is missing", () => {
     const contract = createContract({
       getUser: {
         method: "GET",
@@ -618,8 +634,9 @@ describe("error handling", () => {
       },
     });
 
+    const api = createApi("/", { main: contract });
     expect(() => {
-      implementContract(contract, {
+      buildRoutes(api, "main", {
         getUser: () => ({ id: "1" }),
         // listUsers not implemented
       } as any);

@@ -1,8 +1,16 @@
 import { describe, expect, expectTypeOf, test, vi } from "vite-plus/test";
 import * as T from "typebox";
-import { ApiError, createContract, errorEnvelope } from "../contract";
+import { ApiError, createApi, createContract, errorEnvelope, type Contract } from "../contract";
 import { createFetchClient, HttpError } from "../client";
 import type { RetryContext } from "./make-client";
+
+/**
+ * The client is now built from an `Api`, not a bare `Contract`. Wrapping a contract as
+ * the sole group at api basePath "/" reproduces the pre-v2 URLs: the served path is
+ * `api.basePath + group.basePath + endpoint.path`, and with api basePath "/" that is
+ * exactly the contract's own `basePath + path`.
+ */
+const apiOf = <C extends Contract<any, any>>(contract: C) => createApi("/", { main: contract });
 
 const json = (status: number, body?: unknown, headers: Record<string, string> = {}) =>
   new Response(body === undefined ? null : JSON.stringify(body), {
@@ -20,6 +28,7 @@ const getUserContract = createContract("/api", {
     response: T.Object({ id: T.String() }),
   },
 });
+const getUserApi = apiOf(getUserContract);
 
 describe("createFetchClient URL building", () => {
   const capture = () => {
@@ -41,7 +50,10 @@ describe("createFetchClient URL building", () => {
     const contract = createContract("/api/v1", {
       listUsers: { method: "GET", path: "/users", response: T.Array(T.Object({ id: T.String() })) },
     });
-    await createFetchClient(contract, { fetch: cap.fetch, baseUrl: "https://x.com" }).listUsers();
+    await createFetchClient(apiOf(contract), {
+      fetch: cap.fetch,
+      baseUrl: "https://x.com",
+    }).listUsers();
     expect(cap.request.url).toBe("https://x.com/api/v1/users");
     expect(cap.request.method).toBe("GET");
   });
@@ -51,13 +63,16 @@ describe("createFetchClient URL building", () => {
     const contract = createContract({
       listUsers: { method: "GET", path: "/users", response: T.Array(T.Object({ id: T.String() })) },
     });
-    await createFetchClient(contract, { fetch: cap.fetch, baseUrl: "https://x.com" }).listUsers();
+    await createFetchClient(apiOf(contract), {
+      fetch: cap.fetch,
+      baseUrl: "https://x.com",
+    }).listUsers();
     expect(cap.request.url).toBe("https://x.com/users");
   });
 
   test("replaces path params", async () => {
     const cap = capture();
-    await createFetchClient(getUserContract, {
+    await createFetchClient(getUserApi, {
       fetch: cap.fetch,
       baseUrl: "https://x.com",
     }).getUser({
@@ -76,9 +91,11 @@ describe("createFetchClient URL building", () => {
         response: T.Object({ q: T.String() }),
       },
     });
-    await createFetchClient(contract, { fetch: cap.fetch, baseUrl: "https://x.com" }).search({
-      query: { q: "hi", tags: ["a", "b"] },
-    });
+    await createFetchClient(apiOf(contract), { fetch: cap.fetch, baseUrl: "https://x.com" }).search(
+      {
+        query: { q: "hi", tags: ["a", "b"] },
+      },
+    );
     expect(cap.request.url).toBe("https://x.com/search?q=hi&tags=a&tags=b");
   });
 });
@@ -89,7 +106,7 @@ describe("createFetchClient request/response pipeline", () => {
     const contract = createContract({
       list: { method: "GET", path: "/x", response: T.Array(T.Unknown()) },
     });
-    const client = createFetchClient(contract, { baseUrl: "https://x.com" });
+    const client = createFetchClient(apiOf(contract), { baseUrl: "https://x.com" });
     return client.list().then(() => {
       expect(spy).toHaveBeenCalled();
       spy.mockRestore();
@@ -110,14 +127,16 @@ describe("createFetchClient request/response pipeline", () => {
         response: T.Object({ id: T.String() }),
       },
     });
-    await createFetchClient(contract, { fetch, baseUrl: "https://x.com" }).create({ name: "Ada" });
+    await createFetchClient(apiOf(contract), { fetch, baseUrl: "https://x.com" }).create({
+      name: "Ada",
+    });
     expect(request!.method).toBe("POST");
     expect(request!.headers.get("content-type")).toBe("application/json");
     expect(await request!.text()).toBe(JSON.stringify({ name: "Ada" }));
   });
 
   test("resolves with the parsed body on success", async () => {
-    const client = createFetchClient(getUserContract, {
+    const client = createFetchClient(getUserApi, {
       fetch: okFetch({ id: "1" }),
       baseUrl: "https://x.com",
     });
@@ -128,7 +147,7 @@ describe("createFetchClient request/response pipeline", () => {
     const fetch = vi.fn(async () =>
       json(404, errorEnvelope("NOT_FOUND", 404, "user 5 not found", undefined)),
     );
-    const client = createFetchClient(getUserContract, { fetch, baseUrl: "https://x.com" });
+    const client = createFetchClient(getUserApi, { fetch, baseUrl: "https://x.com" });
     const err = await client.getUser({ id: "1" }).catch((e) => e);
     expect(err).toBeInstanceOf(ApiError);
     expect(err.code).toBe("NOT_FOUND");
@@ -141,7 +160,7 @@ describe("createFetchClient request/response pipeline", () => {
     const fetch = vi.fn(async () =>
       json(409, errorEnvelope("CONFLICT", 409, "duplicate", { conflictingId: "7" })),
     );
-    const client = createFetchClient(getUserContract, { fetch, baseUrl: "https://x.com" });
+    const client = createFetchClient(getUserApi, { fetch, baseUrl: "https://x.com" });
     const err = await client.getUser({ id: "1" }).catch((e) => e);
     expect(err).toBeInstanceOf(ApiError);
     expect(err.code).toBe("CONFLICT");
@@ -150,7 +169,7 @@ describe("createFetchClient request/response pipeline", () => {
 
   test("throws HttpError for a non-envelope (non-handshake) error response", async () => {
     const fetch = vi.fn(async () => json(502, { error: "bad gateway" }));
-    const client = createFetchClient(getUserContract, { fetch, baseUrl: "https://x.com" });
+    const client = createFetchClient(getUserApi, { fetch, baseUrl: "https://x.com" });
     const err = await client.getUser({ id: "1" }).catch((e) => e);
     expect(err).toBeInstanceOf(HttpError);
     expect(err).not.toBeInstanceOf(ApiError);
@@ -163,16 +182,16 @@ describe("createFetchClient request/response pipeline", () => {
     const fetch = vi.fn(async () => {
       throw new TypeError("network down");
     });
-    const client = createFetchClient(getUserContract, { fetch, baseUrl: "https://x.com" });
+    const client = createFetchClient(getUserApi, { fetch, baseUrl: "https://x.com" });
     await expect(client.getUser({ id: "1" })).rejects.toBeInstanceOf(TypeError);
   });
 
-  test("exposes the contract via $contract", () => {
-    const client = createFetchClient(getUserContract, {
+  test("exposes the api via $api", () => {
+    const client = createFetchClient(getUserApi, {
       fetch: okFetch({}),
       baseUrl: "https://x.com",
     });
-    expect(client.$contract).toBe(getUserContract);
+    expect(client.$api).toBe(getUserApi);
   });
 
   test("sends declared headers (and requires them when the schema does)", async () => {
@@ -189,7 +208,7 @@ describe("createFetchClient request/response pipeline", () => {
         response: T.Object({ ok: T.Boolean() }),
       },
     });
-    const client = createFetchClient(contract, { fetch, baseUrl: "https://x.com" });
+    const client = createFetchClient(apiOf(contract), { fetch, baseUrl: "https://x.com" });
 
     await client.secret({ headers: { "x-api-key": "abc" } });
     expect(request!.headers.get("x-api-key")).toBe("abc");
@@ -208,7 +227,7 @@ describe("createFetchClient hooks", () => {
       request = req as Request;
       return json(200, { id: "1" });
     });
-    const client = createFetchClient(getUserContract, {
+    const client = createFetchClient(getUserApi, {
       fetch,
       baseUrl: "https://x.com",
       handleRequest: (ctx) => {
@@ -225,7 +244,7 @@ describe("createFetchClient hooks", () => {
       .fn()
       .mockResolvedValueOnce(json(202, {}, { "x-amzn-waf-action": "challenge" }))
       .mockResolvedValueOnce(json(200, { id: "1" }));
-    const client = createFetchClient(getUserContract, {
+    const client = createFetchClient(getUserApi, {
       fetch,
       baseUrl: "https://x.com",
       handleResponse: (ctx) => {
@@ -252,7 +271,7 @@ describe("createFetchClient hooks", () => {
     // so callbacks never have to guard against an absent error. (An optional key
     // would make `Pick` `{ error?: unknown }`, which is not equal to the below.)
     expectTypeOf<Pick<RetryContext, "error">>().toEqualTypeOf<{ error: unknown }>();
-    const client = createFetchClient(contract, {
+    const client = createFetchClient(apiOf(contract), {
       fetch,
       baseUrl: "https://x.com",
       retry: async (ctx) => {
@@ -274,7 +293,7 @@ describe("createFetchClient hooks", () => {
       sent.push((req as Request).headers.get("authorization"));
       return sent.length === 1 ? json(401, {}) : json(200, { id: "1" });
     });
-    const client = createFetchClient(getUserContract, {
+    const client = createFetchClient(getUserApi, {
       fetch,
       baseUrl: "https://x.com",
       retry: (ctx) => (ctx.attempt < 2 ? { headers: { authorization: "Bearer fresh" } } : false),
@@ -297,7 +316,7 @@ describe("createFetchClient hooks", () => {
         response: T.Object({ id: T.String() }),
       },
     });
-    const client = createFetchClient(contract, {
+    const client = createFetchClient(apiOf(contract), {
       fetch,
       baseUrl: "https://x.com",
       retry: (ctx) => (ctx.attempt < 2 ? { headers: { "x-retry": "1" } } : false),
@@ -323,7 +342,7 @@ describe("createFetchClient hooks", () => {
         response: T.Object({ id: T.String() }),
       },
     });
-    const client = createFetchClient(contract, {
+    const client = createFetchClient(apiOf(contract), {
       fetch,
       baseUrl: "https://x.com",
       retry: (ctx) =>
@@ -351,7 +370,7 @@ describe("createFetchClient hooks", () => {
       seen.push((req as Request).credentials);
       return seen.length === 1 ? json(500, {}) : json(200, { id: "1" });
     });
-    const client = createFetchClient(getUserContract, {
+    const client = createFetchClient(getUserApi, {
       fetch,
       baseUrl: "https://x.com",
       retry: (ctx) => (ctx.attempt < 2 ? { credentials: "include" } : false),
@@ -362,7 +381,7 @@ describe("createFetchClient hooks", () => {
 
   test("returning nothing (or false) prevents a retry", async () => {
     const fetch = vi.fn(async () => json(500, { error: "boom" }));
-    const client = createFetchClient(getUserContract, {
+    const client = createFetchClient(getUserApi, {
       fetch,
       baseUrl: "https://x.com",
       // no explicit return → undefined → do not retry
@@ -375,7 +394,7 @@ describe("createFetchClient hooks", () => {
 
 describe("client typing", () => {
   test("endpoint return types are inferred", () => {
-    const client = createFetchClient(getUserContract, {
+    const client = createFetchClient(getUserApi, {
       fetch: okFetch({}),
       baseUrl: "https://x.com",
     });
@@ -393,7 +412,10 @@ describe("client typing", () => {
       },
       plain: { method: "GET", path: "/p", response: T.Null() },
     });
-    const client = createFetchClient(contract, { fetch: okFetch(null), baseUrl: "https://x.com" });
+    const client = createFetchClient(apiOf(contract), {
+      fetch: okFetch(null),
+      baseUrl: "https://x.com",
+    });
 
     // type-only assertions; never executed
     void (() => {
@@ -414,7 +436,10 @@ describe("client typing", () => {
       listCats: { method: "GET", path: "/cats", response: T.Array(T.Object({ id: T.String() })) },
       purgeCats: { method: "DELETE", path: "/cats", response: T.Null(), internal: true },
     });
-    const client = createFetchClient(contract, { fetch: okFetch([]), baseUrl: "https://x.com" });
+    const client = createFetchClient(apiOf(contract), {
+      fetch: okFetch([]),
+      baseUrl: "https://x.com",
+    });
 
     // Runtime: the internal endpoint is not attached.
     expect("listCats" in client).toBe(true);

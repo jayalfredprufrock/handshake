@@ -1,9 +1,9 @@
 ---
 title: NestJS
-description: Server adapter for NestJS — bind contracts to typed, validated controller methods.
+description: Server adapter for NestJS — bind an api to typed, validated controller methods.
 ---
 
-The NestJS adapter binds a contract to ordinary Nest controller methods. It parses and validates requests, serializes responses, and emits the same handshake error envelope as the other adapters — so the same fetch client works unchanged against a Nest server. Dependency injection, guards, interceptors, and pipes all work as usual.
+The NestJS adapter binds an api to ordinary Nest controller methods. It parses and validates requests, serializes responses, and emits the same handshake error envelope as the other adapters — so the same fetch client works unchanged against a Nest server. Dependency injection, guards, interceptors, and pipes all work as usual.
 
 ## Installation
 
@@ -24,53 +24,54 @@ The adapter ships **legacy decorators**, so your `tsconfig.json` needs the stand
 
 ## Basic usage
 
-Import `HandshakeModule.forRoot()` once at the app root; it registers the interceptor (request parsing/validation + response validation) and the exception filter (envelope serialization) globally.
+Import `HandshakeModule.forRoot()` once at the app root; it registers the interceptor (request parsing/validation + response validation) and the exception filter (envelope serialization) globally. Pass the api(s) you serve via `apis`.
 
 ```ts
 import { Module } from "@nestjs/common";
 import { HandshakeModule } from "@jayalfredprufrock/handshake/nestjs";
-import { contract } from "./contract";
+import { api } from "./contract";
 import { UserController } from "./user.controller";
 
 @Module({
-  imports: [HandshakeModule.forRoot({ contracts: [contract] })],
+  imports: [HandshakeModule.forRoot({ apis: [api] })],
   controllers: [UserController],
 })
 export class AppModule {}
 ```
 
-Then implement endpoints as controller methods with `@HandshakeHandler`:
+Then implement endpoints as controller methods with `@ApiHandler`:
 
 ```ts
 import { Controller } from "@nestjs/common";
-import { HandshakeHandler, HandshakeReq } from "@jayalfredprufrock/handshake/nestjs";
-import type { HandshakeInput } from "@jayalfredprufrock/handshake/nestjs";
-import { contract } from "./contract";
+import { ApiHandler, ApiInput } from "@jayalfredprufrock/handshake/nestjs";
+import { api } from "./contract";
 import { UserService } from "./user.service";
 
-@Controller() // no prefix — the route comes from the contract
+@Controller() // no prefix — the route comes from the api
 export class UserController {
   constructor(private readonly users: UserService) {}
 
-  @HandshakeHandler(contract, "getUser")
-  getUser(@HandshakeReq() req: HandshakeInput<typeof contract, "getUser">) {
+  @ApiHandler(api, "getUser")
+  getUser(@ApiInput() req: ApiInput<typeof api, "getUser">) {
     const user = this.users.find(req.params.id);
-    if (!user) throw contract.error("NOT_FOUND", "user not found");
+    if (!user) throw api.error("NOT_FOUND", "user not found");
     return user;
   }
 
-  @HandshakeHandler(contract, "createUser")
-  createUser(@HandshakeReq() req: HandshakeInput<typeof contract, "createUser">) {
+  @ApiHandler(api, "createUser")
+  createUser(@ApiInput() req: ApiInput<typeof api, "createUser">) {
     return this.users.create(req.body);
   }
 }
 ```
 
-## `@HandshakeHandler(contract, endpointName, options?)`
+When `apis` are provided, the module runs a **bootstrap scan**: it walks every controller method's `@ApiHandler` metadata and asserts, per api, that every endpoint has exactly one bound handler and that no two routes collide on `(method, path)`. A missing, duplicate, or conflicting handler fails startup — so an incompletely-served api can't boot.
 
-Binds a method to a contract endpoint. It:
+## `@ApiHandler(api, endpointName, options?)`
 
-- registers the route at `joinPath(contract.basePath, endpoint.path)` with the endpoint's HTTP verb,
+Binds a method to an api endpoint (the name is unique across the api). It:
+
+- registers the route at `joinPath(api.basePath, endpoint.path)` with the endpoint's HTTP verb,
 - sets the success status to `endpoint.responseCode ?? 200` (overriding Nest's POST→`201` default),
 - **enforces the method's return type** against the endpoint's response schema.
 
@@ -83,14 +84,14 @@ Because this uses a legacy method decorator, a mismatched return surfaces as `TS
 ### Options
 
 ```ts
-interface HandshakeHandlerOptions {
+interface ApiHandlerOptions {
   validateResponse?: boolean; // per-endpoint override of the module default
 }
 ```
 
-## `@HandshakeReq()` and input typing
+## `@ApiInput()` and input typing
 
-`@HandshakeReq()` injects the parsed, validated input. Type it with `HandshakeInput<typeof contract, "endpointName">`; the object contains only the fields the endpoint declares:
+`@ApiInput()` injects the parsed, validated input. `ApiInput` is **both** the decorator value and the type, so it's a single import — type the parameter with `ApiInput<typeof api, "endpointName">`. The object contains only the fields the endpoint declares:
 
 | Field     | Present when               | Type                   |
 | --------- | -------------------------- | ---------------------- |
@@ -99,7 +100,7 @@ interface HandshakeHandlerOptions {
 | `headers` | endpoint defines `headers` | `Static<E["headers"]>` |
 | `body`    | endpoint defines `body`    | `Static<E["body"]>`    |
 
-The full Nest toolbox still applies — inject services via the constructor, and layer `@UseGuards`, `@UseInterceptors`, and `@UsePipes` alongside `@HandshakeHandler`.
+The full Nest toolbox still applies — inject services via the constructor, and layer `@UseGuards`, `@UseInterceptors`, and `@UsePipes` alongside `@ApiHandler`.
 
 ### Return values
 
@@ -114,11 +115,11 @@ The full Nest toolbox still applies — inject services via the constructor, and
 
 ## Routing
 
-The contract owns the path. Use `@Controller()` with **no prefix**: the route is `joinPath(contract.basePath, endpoint.path)`. Nest's global prefix, versioning, and controller prefixes are ignored — keeping the server, client, and OpenAPI document in lockstep with the contract.
+The api owns the path. Use `@Controller()` with **no prefix**: the route is `joinPath(api.basePath, endpoint.path)`. Nest's global prefix, versioning, and controller prefixes are ignored — keeping the server, client, and OpenAPI document in lockstep with the api.
 
 ## Error handling
 
-Every error the server emits is a handshake envelope — `{ kind: "HANDSHAKE", code, status, message, details }` — identical to the other adapters. Throw a declared error with `contract.error("CODE", message, details?)` (or `new ApiError({...})`); a **known-code** `ApiError` is serialized **wherever it's thrown** — a handler, a guard, an interceptor, or a service — with no extra wiring.
+Every error the server emits is a handshake envelope — `{ kind: "HANDSHAKE", code, status, message, details }` — identical to the other adapters. Throw a declared error with `api.error("CODE", message, details?)` (or `new ApiError({...})`); a **known-code** `ApiError` is serialized **wherever it's thrown** — a handler, a guard, an interceptor, or a service — with no extra wiring.
 
 Two codes are reserved and emitted by the framework:
 
@@ -131,18 +132,18 @@ Two codes are reserved and emitted by the framework:
 interface HandshakeModuleOptions {
   validateResponse?: boolean;
   onError?: (err: unknown, host: ArgumentsHost) => ApiError | void | Promise<ApiError | void>;
-  contracts?: Contract[];
+  apis?: Api | Api[];
 }
 ```
 
 - **`onError`** handles any error the framework didn't already serialize as a recognized contract error — plain exceptions, Nest `HttpException`s, and `ApiError`s with an unrecognized code. Return an `ApiError` to shape the response, or nothing for the default disposition (an `HttpException` keeps its own status; anything else becomes `UNKNOWN_ERROR`). The server can never emit a non-handshake body, regardless of what `onError` does.
-- **`contracts`** lets the filter recognize declared codes globally — including errors thrown from guards or services before a route matches. When omitted, only a matched route's own contract codes (plus the framework codes) are recognized, and any other `ApiError` code becomes `UNKNOWN_ERROR`. Pass every contract you serve.
+- **`apis`** lets the filter recognize the registered apis' declared codes globally — including errors thrown from guards or services before a route matches — and drives the bootstrap completeness/conflict scan described above. When omitted, only a matched route's own api codes (plus the framework codes) are recognized, any other `ApiError` code becomes `UNKNOWN_ERROR`, and no bootstrap scan runs. Pass every api you serve.
 
 ```ts
 import { ResponseValidationError } from "@jayalfredprufrock/handshake/server";
 
 HandshakeModule.forRoot({
-  contracts: [contract],
+  apis: [api],
   onError: (err) => {
     if (err instanceof ResponseValidationError) log.alert("contract drift", err.issues);
     // return nothing → client gets { code: "UNKNOWN_ERROR" } (cause never sent)
@@ -158,9 +159,9 @@ A Nest `HttpException` (from the framework, a guard, or a pipe) reaches `onError
 import { HttpException } from "@nestjs/common";
 
 HandshakeModule.forRoot({
-  contracts: [contract],
+  apis: [api],
   onError: (err) =>
-    err instanceof HttpException ? contract.error("UNAUTHORIZED", err.message) : undefined,
+    err instanceof HttpException ? api.error("UNAUTHORIZED", err.message) : undefined,
 });
 ```
 
@@ -175,9 +176,9 @@ import {
 } from "@jayalfredprufrock/handshake/nestjs";
 ```
 
-## Accessing the contract per request
+## Accessing the api per request
 
-`@HandshakeHandler` stamps each route with its `HandshakeMeta` — the `contract`, `endpointName`, resolved `endpoint`, and per-handler `options` — under the `HANDSHAKE_META` reflector key. A **guard, interceptor, or pipe** can read it off the handler with Nest's `Reflector`:
+`@ApiHandler` stamps each route with its `HandshakeMeta` — the `api`, `endpointName`, resolved `endpoint`, and per-handler `options` — under the `HANDSHAKE_META` reflector key. A **guard, interceptor, or pipe** can read it off the handler with Nest's `Reflector`:
 
 ```ts
 import { Injectable } from "@nestjs/common";
@@ -187,14 +188,14 @@ import { HANDSHAKE_META } from "@jayalfredprufrock/handshake/nestjs";
 import type { HandshakeMeta } from "@jayalfredprufrock/handshake/nestjs";
 
 @Injectable()
-export class ContractAwareGuard implements CanActivate {
+export class ApiAwareGuard implements CanActivate {
   constructor(private readonly reflector: Reflector) {}
 
   canActivate(ctx: ExecutionContext): boolean {
     const meta = this.reflector.get<HandshakeMeta | undefined>(HANDSHAKE_META, ctx.getHandler());
     if (!meta) return true; // not a handshake route
-    const { contract, endpointName, endpoint } = meta;
-    // …inspect contract.errors, endpoint.method, endpoint.path, etc.
+    const { api, endpointName, endpoint } = meta;
+    // …inspect api.errors, endpoint.method, endpoint.path, etc.
     return true;
   }
 }
@@ -203,5 +204,5 @@ export class ContractAwareGuard implements CanActivate {
 A custom **exception filter** (or anything that runs after the interceptor) can instead read the same meta off the request via `HANDSHAKE_REQ_META`.
 
 :::caution[Not available in Nest middleware]
-Nest **middleware** runs at the HTTP-server layer, before the router matches a handler and before the interceptor. It has no `ExecutionContext` (so `Reflector` can't reach the route metadata) and `HANDSHAKE_REQ_META` is not yet set on the request. If you need the contract for a request, use a **guard or interceptor** instead of middleware.
+Nest **middleware** runs at the HTTP-server layer, before the router matches a handler and before the interceptor. It has no `ExecutionContext` (so `Reflector` can't reach the route metadata) and `HANDSHAKE_REQ_META` is not yet set on the request. If you need the api for a request, use a **guard or interceptor** instead of middleware.
 :::

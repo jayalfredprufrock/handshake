@@ -1,26 +1,28 @@
 ---
 title: Fetch Client
-description: Create a fully-typed HTTP client from a contract.
+description: Create a fully-typed HTTP client from an api.
 ---
 
-The fetch client generates typed methods for every endpoint in a contract. No code generation or compile step — just TypeScript inference. It owns the whole request lifecycle: URL building, JSON serialization, the `fetch` call, response parsing, and error mapping.
+The fetch client generates typed methods for every endpoint in an api. No code generation or compile step — just TypeScript inference. It owns the whole request lifecycle: URL building, JSON serialization, the `fetch` call, response parsing, and error mapping.
 
 ## Basic Usage
 
 ```ts
 import { createFetchClient } from "@jayalfredprufrock/handshake/client";
-import { contract } from "./contract";
+import { api } from "./contract";
 
-const api = createFetchClient(contract, { baseUrl: "http://localhost:3000" });
+const client = createFetchClient(api, { baseUrl: "http://localhost:3000" });
 
-const users = await api.listUsers();
-const user = await api.getUser({ id: "1" });
-const created = await api.createUser({ name: "Alice", email: "alice@example.com" });
+const users = await client.listUsers();
+const user = await client.getUser({ id: "1" });
+const created = await client.createUser({ name: "Alice", email: "alice@example.com" });
 ```
 
 `fetch` defaults to `globalThis.fetch` — there's nothing to wire up.
 
-## `createFetchClient(contract, config)`
+Endpoints marked `internal: true` are omitted from the generated client, so they never appear as callable methods.
+
+## `createFetchClient(api, config)`
 
 ### Config
 
@@ -36,10 +38,10 @@ interface FetchClientConfig {
 
 #### `baseUrl`
 
-Combined with the contract's base path and the endpoint path to form the full URL.
+Combined with the api's base path, the group's base path, and the endpoint path to form the full URL.
 
 ```ts
-// Contract basePath "/api", endpoint path "/users/:id", baseUrl "http://localhost:3000"
+// api basePath "/api", group basePath "/users", endpoint path "/:id", baseUrl "http://localhost:3000"
 // → GET http://localhost:3000/api/users/1
 ```
 
@@ -75,7 +77,7 @@ retry: async (ctx) => {
     await solveChallenge();
     return true;
   }
-  if (contract.isError(ctx.error, "TOKEN_EXPIRED")) {
+  if (api.isError(ctx.error, "TOKEN_EXPIRED")) {
     await tokens.refresh();
     return true;
   }
@@ -88,10 +90,10 @@ retry: async (ctx) => {
 The generated method signature adapts to the endpoint:
 
 ```ts
-api.updateUser(params, body, options); // params + body
-api.getUser(params, options); // params only
-api.createUser(body, options); // body only
-api.listUsers(options); // neither
+client.updateUser(params, body, options); // params + body
+client.getUser(params, options); // params only
+client.createUser(body, options); // body only
+client.listUsers(options); // neither
 ```
 
 The `options` argument — and each of its fields (`query`, `headers`) — is **required only when the corresponding schema has a required property**, and optional otherwise.
@@ -111,7 +113,7 @@ interface ClientOptions<E extends Endpoint> {
 Query parameters, typed from the endpoint's `query` schema. Array values serialize as repeated keys.
 
 ```ts
-await api.search({ query: { q: "hello", page: 2, tags: ["ts", "api"] } });
+await client.search({ query: { q: "hello", page: 2, tags: ["ts", "api"] } });
 // → GET /search?q=hello&page=2&tags=ts&tags=api
 ```
 
@@ -120,7 +122,7 @@ await api.search({ query: { q: "hello", page: 2, tags: ["ts", "api"] } });
 Request headers, typed from the endpoint's `headers` schema (declare header names lowercase). Merged into the request; `request.headers` and `handleRequest` override them.
 
 ```ts
-await api.secret({ headers: { "x-api-key": key } });
+await client.secret({ headers: { "x-api-key": key } });
 ```
 
 ### `request`
@@ -129,21 +131,21 @@ Additional `RequestInit` fields (abort signal, credentials, escape-hatch headers
 
 ```ts
 const controller = new AbortController();
-await api.listUsers({ request: { signal: controller.signal } });
+await client.listUsers({ request: { signal: controller.signal } });
 ```
 
 ## Errors
 
-A handshake error response is thrown as an `ApiError`, which mirrors the wire envelope — `{ code, status, message, details }` — plus a client-only `response`. The server brands its envelope with `kind: "HANDSHAKE"`, so the client reconstructs the `ApiError` 1:1. Any **other** non-OK response (a proxy, gateway, or non-handshake backend) is thrown as an `HttpError` (`{ status, body, response }`) — never an `ApiError`. Network failures propagate as-is. Recognize and narrow contract errors with `contract.isError`:
+A handshake error response is thrown as an `ApiError`, which mirrors the wire envelope — `{ code, status, message, details }` — plus a client-only `response`. The server brands its envelope with `kind: "HANDSHAKE"`, so the client reconstructs the `ApiError` 1:1. Any **other** non-OK response (a proxy, gateway, or non-handshake backend) is thrown as an `HttpError` (`{ status, body, response }`) — never an `ApiError`. Network failures propagate as-is. Recognize and narrow api errors with `api.isError`:
 
 ```ts
-import { contract } from "./contract";
+import { api } from "./contract";
 import { HttpError } from "@jayalfredprufrock/handshake/client";
 
 try {
-  await api.getUser({ id: "42" });
+  await client.getUser({ id: "42" });
 } catch (err) {
-  if (contract.isError(err)) {
+  if (api.isError(err)) {
     switch (err.code) {
       case "NOT_FOUND":
         return null;
@@ -155,18 +157,18 @@ try {
   }
 
   // or check a specific code
-  if (contract.isError(err, "CONFLICT")) err.details.conflictingId; // typed
+  if (api.isError(err, "CONFLICT")) err.details.conflictingId; // typed
 }
 ```
 
-The contract is also reachable from the client as `client.$contract`, so `client.$contract.isError(...)` works where you only hold the client.
+The api is also reachable from the client as `client.$api`, so `client.$api.isError(...)` works where you only hold the client.
 
 ## Endpoint Metadata
 
 Each method also exposes the original endpoint definition:
 
 ```ts
-api.getUser.method; // "GET"
-api.getUser.path; // "/users/:id"
-api.getUser.meta; // { auth: "required" } (if defined)
+client.getUser.method; // "GET"
+client.getUser.path; // "/users/:id"
+client.getUser.meta; // { auth: "required" } (if defined)
 ```

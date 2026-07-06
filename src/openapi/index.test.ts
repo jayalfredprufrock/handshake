@@ -1,12 +1,12 @@
 import { describe, expect, test } from "vite-plus/test";
 import * as T from "typebox";
-import { combineContracts, createContract } from "../contract";
+import { createApi, createContract } from "../contract";
 import { generateOpenApi } from "./index";
 
 const User = T.Object({ id: T.String(), name: T.String() }, { $id: "User" });
 
 const contract = createContract(
-  "/api",
+  "/",
   {
     getUser: {
       method: "GET",
@@ -35,7 +35,12 @@ const contract = createContract(
   },
 );
 
-const spec = generateOpenApi(contract, {
+// The generator consumes an Api, not a bare Contract. Wrapping the contract under
+// the api base path "/api" (group base path "/") keeps every emitted path at
+// "/api/...", matching the original expectations.
+const api = createApi("/api", { accounts: contract });
+
+const spec = generateOpenApi(api, {
   info: { title: "Demo", version: "1.0.0" },
   servers: [{ url: "https://api.example.com" }],
 });
@@ -143,25 +148,32 @@ describe("generateOpenApi", () => {
     expect((spec.paths!["/api/users/{id}"]!.get! as any)["x-auth"]).toBe("required");
   });
 
-  test("derives tags from named groups of a combined contract", () => {
-    const combined = combineContracts({ accounts: contract });
-    const out = generateOpenApi(combined, { info: { title: "x", version: "1" } });
+  test("derives tags from the named groups of the api", () => {
+    const out = generateOpenApi(api, { info: { title: "x", version: "1" } });
     expect(out.tags).toEqual([{ name: "accounts" }]);
     expect((Object.values(out.paths!["/api/users/{id}"]!)[0] as any).tags).toEqual(["accounts"]);
   });
 
-  test("falls back to meta.tags when there is no named group", () => {
-    const c = createContract({
-      ping: { method: "GET", path: "/ping", response: T.Null(), meta: { tags: ["health"] } },
+  test("group name takes precedence over an endpoint's meta.tags", () => {
+    // Behavior change: every api has named groups, so an operation's tag is always
+    // its group name. The old "fall back to meta.tags when there is no named group"
+    // path is unreachable now — the group name always wins. Here the group "system"
+    // wins over the endpoint's own meta.tags of ["health"].
+    const c = createApi("/", {
+      system: createContract({
+        ping: { method: "GET", path: "/ping", response: T.Null(), meta: { tags: ["health"] } },
+      }),
     });
     const out = generateOpenApi(c, { info: { title: "x", version: "1" } });
-    expect((out.paths!["/ping"]!.get! as any).tags).toEqual(["health"]);
+    expect((out.paths!["/ping"]!.get! as any).tags).toEqual(["system"]);
   });
 
   test("omits internal endpoints", () => {
-    const c = createContract("/api", {
-      publicPing: { method: "GET", path: "/ping", response: T.Null() },
-      secretPurge: { method: "DELETE", path: "/purge", response: T.Null(), internal: true },
+    const c = createApi("/api", {
+      ops: createContract("/", {
+        publicPing: { method: "GET", path: "/ping", response: T.Null() },
+        secretPurge: { method: "DELETE", path: "/purge", response: T.Null(), internal: true },
+      }),
     });
     const out = generateOpenApi(c, { info: { title: "x", version: "1" } });
     expect(out.paths).toHaveProperty(["/api/ping"]);

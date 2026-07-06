@@ -5,6 +5,8 @@ description: Utility types for extracting TypeScript types from contracts and en
 
 Handshake exports several utility types that let you extract TypeScript types from your contracts and endpoints. These are useful when you need to type things outside of the client or server — for example, typing React component props based on a response schema, or building custom middleware.
 
+The examples below read endpoints off a `contract`, but the composed `api` from [`createApi`](/handshake/core/contracts/#composing-contracts-into-an-api) works identically: both a `Contract` and an `Api` expose an `.endpoints` record, so you can write `typeof api.endpoints.getUser` just as well.
+
 ## `InferSchema<S>`
 
 Converts a TypeBox schema type to its corresponding TypeScript type. This is a convenience wrapper around TypeBox's `Static<T>`.
@@ -54,13 +56,13 @@ type UserParams = StaticEndpoint<typeof contract.endpoints.getUser>["params"];
 
 ## `StaticApi<C, E>`
 
-A shorthand for `StaticEndpoint` that works with the full contract endpoints record and an endpoint name:
+A shorthand for `StaticEndpoint` that works with a full `endpoints` record (from a `Contract` or an `Api`) and an endpoint name:
 
 ```ts
 import type { StaticApi } from "@jayalfredprufrock/handshake/client";
 
-type GetUser = StaticApi<typeof contract.endpoints, "getUser">;
-// Same as StaticEndpoint<typeof contract.endpoints.getUser>
+type GetUser = StaticApi<typeof api.endpoints, "getUser">;
+// Same as StaticEndpoint<typeof api.endpoints.getUser>
 ```
 
 ## `BaseHandlerInput<E>`

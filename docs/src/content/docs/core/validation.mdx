@@ -111,19 +111,19 @@ This means:
 
 ### Configuring Response Validation
 
-`validateResponse` is enabled by default and governs **both** success and error response bodies. It can be set per module or per handler:
+`validateResponse` is enabled by default and governs **both** success and error response bodies. It can be set on a whole `buildRoutes` bundle or per handler:
 
 ```ts
-// Disable for the whole module
-const module = implementContract(contract, handlers, { validateResponse: false });
+// Disable for the whole group
+const routes = buildRoutes(api, "users", handlers, { validateResponse: false });
 
 // Disable for a specific handler (closure form)
-const module = implementContract(contract, (group) => {
+const routes = buildRoutes(api, "users", (group) => {
   group.implement("listUsers", () => [...users.values()], { validateResponse: false });
 });
 ```
 
-Per-handler settings override the module setting.
+Per-handler settings override the bundle setting.
 
 ### Why strip instead of reject?
 

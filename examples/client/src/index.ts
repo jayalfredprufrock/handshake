@@ -1,8 +1,8 @@
 import { createFetchClient } from "@jayalfredprufrock/handshake/client";
-import { contract } from "@jayalfredprufrock/handshake-example-contract";
+import { api as contractApi } from "@jayalfredprufrock/handshake-example-contract";
 import { setTimeout } from "node:timers/promises";
 
-const api = createFetchClient(contract, {
+const api = createFetchClient(contractApi, {
   baseUrl: "http://localhost:3000",
 });
 

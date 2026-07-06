@@ -4,33 +4,49 @@ import type { CanActivate, INestApplication } from "@nestjs/common";
 import { Test } from "@nestjs/testing";
 import * as T from "typebox";
 import { afterEach, describe, expect, test } from "vite-plus/test";
-import { createContract } from "../../contract";
+import { createApi, createContract } from "../../contract";
 import type { HandshakeModuleOptions } from "./index";
-import { HandshakeHandler, HandshakeModule, HandshakeReq } from "./index";
-import type { HandshakeInput } from "./index";
+import { ApiHandler, ApiInput, HandshakeModule } from "./index";
 
-const contract = createContract(
-  "/api",
-  {
-    getUser: {
-      method: "GET",
-      path: "/users/:id",
-      params: T.Object({ id: T.String() }),
-      response: T.Object({ id: T.String(), name: T.String() }),
-    },
-    createUser: {
-      method: "POST",
-      path: "/users",
-      body: T.Object({ name: T.String() }),
-      response: T.Object({ id: T.String(), name: T.String() }),
-    },
-    teapot: {
-      method: "GET",
-      path: "/teapot",
-      responseCode: 201,
-      response: T.Object({ ok: T.Boolean() }),
-    },
+const contract = createContract({
+  getUser: {
+    method: "GET",
+    path: "/users/:id",
+    params: T.Object({ id: T.String() }),
+    response: T.Object({ id: T.String(), name: T.String() }),
   },
+  createUser: {
+    method: "POST",
+    path: "/users",
+    body: T.Object({ name: T.String() }),
+    response: T.Object({ id: T.String(), name: T.String() }),
+  },
+  teapot: {
+    method: "GET",
+    path: "/teapot",
+    responseCode: 201,
+    response: T.Object({ ok: T.Boolean() }),
+  },
+});
+
+const api = createApi("/api", { users: contract }, { errors: { NOT_FOUND: { status: 404 } } });
+
+// A getUser-only api for the guard controllers below: the bootstrap scan requires
+// every endpoint of a registered api to have a bound @ApiHandler, and those
+// controllers only implement getUser. It still declares NOT_FOUND so a known-code
+// ApiError thrown in a guard (before the interceptor runs) is recognized.
+const guardContract = createContract({
+  getUser: {
+    method: "GET",
+    path: "/users/:id",
+    params: T.Object({ id: T.String() }),
+    response: T.Object({ id: T.String(), name: T.String() }),
+  },
+});
+
+const guardApi = createApi(
+  "/api",
+  { users: guardContract },
   { errors: { NOT_FOUND: { status: 404 } } },
 );
 
@@ -49,20 +65,20 @@ class ThrownByService extends Error {}
 class UserController {
   constructor(private readonly users: UserService) {}
 
-  @HandshakeHandler(contract, "getUser")
-  getUser(@HandshakeReq() req: HandshakeInput<typeof contract, "getUser">) {
+  @ApiHandler(api, "getUser")
+  getUser(@ApiInput() req: ApiInput<typeof api, "getUser">) {
     const user = this.users.find(req.params.id);
-    if (!user) throw contract.error("NOT_FOUND", "user not found");
+    if (!user) throw api.error("NOT_FOUND", "user not found");
     return user;
   }
 
-  @HandshakeHandler(contract, "createUser")
-  createUser(@HandshakeReq() req: HandshakeInput<typeof contract, "createUser">) {
+  @ApiHandler(api, "createUser")
+  createUser(@ApiInput() req: ApiInput<typeof api, "createUser">) {
     if (req.body.name === "explode") throw new ThrownByService("boom");
     return { id: "2", name: req.body.name };
   }
 
-  @HandshakeHandler(contract, "teapot")
+  @ApiHandler(api, "teapot")
   teapot() {
     return { ok: true };
   }
@@ -78,15 +94,15 @@ class DenyGuard implements CanActivate {
 @Injectable()
 class ApiErrorGuard implements CanActivate {
   canActivate(): boolean {
-    throw contract.error("NOT_FOUND", "blocked by guard");
+    throw guardApi.error("NOT_FOUND", "blocked by guard");
   }
 }
 
 @Controller()
 class GuardedController {
   @UseGuards(DenyGuard)
-  @HandshakeHandler(contract, "getUser")
-  getUser(@HandshakeReq() req: HandshakeInput<typeof contract, "getUser">) {
+  @ApiHandler(guardApi, "getUser")
+  getUser(@ApiInput() req: ApiInput<typeof guardApi, "getUser">) {
     return { id: req.params.id, name: "never" };
   }
 }
@@ -94,8 +110,8 @@ class GuardedController {
 @Controller()
 class ApiErrorGuardedController {
   @UseGuards(ApiErrorGuard)
-  @HandshakeHandler(contract, "getUser")
-  getUser(@HandshakeReq() req: HandshakeInput<typeof contract, "getUser">) {
+  @ApiHandler(guardApi, "getUser")
+  getUser(@ApiInput() req: ApiInput<typeof guardApi, "getUser">) {
     return { id: req.params.id, name: "never" };
   }
 }
@@ -110,7 +126,7 @@ afterEach(async () => {
 
 async function bootstrap(
   controllers: (new (...args: any[]) => unknown)[],
-  options: HandshakeModuleOptions = { contracts: [contract] },
+  options: HandshakeModuleOptions = { apis: [api] },
   providers: any[] = [UserService],
 ): Promise<string> {
   const moduleRef = await Test.createTestingModule({
@@ -132,7 +148,7 @@ describe("nestjs adapter", () => {
     expect(await res.json()).toEqual({ id: "1", name: "Alice" });
   });
 
-  test("serializes a contract.error into the handshake envelope", async () => {
+  test("serializes an api.error into the handshake envelope", async () => {
     const base = await bootstrap([UserController]);
     const res = await fetch(`${base}/api/users/missing`);
     expect(res.status).toBe(404);
@@ -153,7 +169,7 @@ describe("nestjs adapter", () => {
   });
 
   test("a Nest HttpException keeps its status and is not a handshake envelope", async () => {
-    const base = await bootstrap([GuardedController]);
+    const base = await bootstrap([GuardedController], { apis: [guardApi] });
     const res = await fetch(`${base}/api/users/1`);
     expect(res.status).toBe(401);
     const body = await res.json();
@@ -161,7 +177,7 @@ describe("nestjs adapter", () => {
   });
 
   test("a known-code ApiError thrown in a guard is serialized as the envelope", async () => {
-    const base = await bootstrap([ApiErrorGuardedController]);
+    const base = await bootstrap([ApiErrorGuardedController], { apis: [guardApi] });
     const res = await fetch(`${base}/api/users/1`);
     expect(res.status).toBe(404);
     expect(await res.json()).toMatchObject({ kind: "HANDSHAKE", code: "NOT_FOUND" });
@@ -169,9 +185,9 @@ describe("nestjs adapter", () => {
 
   test("onError maps an unknown error to a typed contract error", async () => {
     const base = await bootstrap([UserController], {
-      contracts: [contract],
+      apis: [api],
       onError: (err) =>
-        err instanceof ThrownByService ? contract.error("NOT_FOUND", "mapped") : undefined,
+        err instanceof ThrownByService ? api.error("NOT_FOUND", "mapped") : undefined,
     });
     const res = await fetch(`${base}/api/users`, {
       method: "POST",

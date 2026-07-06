@@ -1,4 +1,4 @@
-import type { Contract, Endpoint, ErrorMap, InferSchema, ValidationIssue } from "../../contract";
+import type { Api, Contract, Endpoint, InferSchema, ValidationIssue } from "../../contract";
 import { ApiError, RESERVED_ERROR_CODES, errorEnvelope, joinPath } from "../../contract";
 import {
   AssertError,
@@ -41,32 +41,44 @@ export interface GroupBuilder<E extends Record<string, Endpoint>, HonoEnv extend
   ): void;
 }
 
-export interface ImplementContractOptions<HonoEnv extends Env = Env> {
+export interface BuildRoutesOptions<HonoEnv extends Env = Env> {
   validateResponse?: boolean;
   middleware?: EndpointMiddlewareFactory<HonoEnv>;
 }
 
 export interface CreateHonoAppOptions<HonoEnv extends Env = Env> {
   /**
+   * The built routes to mount — an array of {@link buildRoutes} results, or an eager
+   * `import.meta.glob(..., { eager: true })` module-record (every `Routes`-branded
+   * export is collected and deduped by identity).
+   */
+  routes: Routes[] | Record<string, unknown>;
+  /**
    * Handle an error the framework didn't already serialize as a recognized contract
-   * error. A **known-code** `ApiError` — a code declared in a contract, or a built-in
+   * error. A **known-code** `ApiError` — a code declared by the api, or a built-in
    * `VALIDATION_ERROR`/`UNKNOWN_ERROR` — is serialized automatically and never reaches
    * `onError`; everything else does: plain exceptions, Hono `HTTPException`s, and
    * `ApiError`s with an unrecognized code. Return an `ApiError` to shape the response,
    * or nothing for the default — an `HTTPException` keeps its own status, anything
-   * else becomes a 500 `UNKNOWN_ERROR`. The server can never emit a non-`ApiError`
-   * body, regardless of what this does.
+   * else becomes a 500 `UNKNOWN_ERROR`.
    */
   onError?: (err: unknown, c: Context<HonoEnv>) => ApiError | void | Promise<ApiError | void>;
   middleware?: EndpointMiddlewareFactory<HonoEnv> | EndpointMiddlewareFactory<HonoEnv>[];
 }
 
-export interface RouteModule {
+const ROUTES_BRAND = "handshake.routes";
+
+/** A bundle of implemented routes for one api, produced by {@link buildRoutes} and
+ *  consumed by {@link createHonoApp}. Opaque — its shape is an implementation detail. */
+export interface Routes {
+  readonly __brand: typeof ROUTES_BRAND;
+  _api: Api<any, any>;
   _hono: Hono;
   _basePath: string;
-  _endpoints: Record<string, Endpoint>;
-  /** Error codes declared by this module's contract (for the known-code check). */
+  /** Error codes recognized by the api (for the known-code check). */
   _errorCodes: Set<string>;
+  /** The endpoints this bundle implemented, with resolved method + full path. */
+  _implemented: { name: string; method: string; path: string }[];
   _rebuild: (globalFactory: EndpointMiddlewareFactory) => Hono;
 }
 
@@ -99,40 +111,54 @@ function toMiddlewareArray(
   return Array.isArray(value) ? value : [value];
 }
 
-function buildModule(
-  endpoints: Record<string, Endpoint>,
-  handlers: Record<string, any>,
-  perHandlerOptions: Record<string, HandlerOptions | undefined>,
-  errors: ErrorMap | undefined,
-  mountPath: string,
-  moduleOptions: ImplementContractOptions,
-  groupMiddlewares: MiddlewareHandler[],
-): RouteModule {
-  const missing = Object.keys(endpoints).filter((name) => !(name in handlers));
-  if (missing.length > 0) {
-    throw new Error(`Missing handlers for endpoints: ${missing.join(", ")}`);
+interface BuildModuleParams {
+  api: Api<any, any>;
+  /** Candidate endpoint defs (a group's for the named form, the flat api set for unnamed). */
+  endpoints: Record<string, Endpoint>;
+  handlers: Record<string, any>;
+  perHandlerOptions: Record<string, HandlerOptions | undefined>;
+  mountPath: string;
+  /** When true, every candidate endpoint must have a handler (the named-contract form). */
+  requireComplete: boolean;
+  moduleOptions: BuildRoutesOptions;
+  groupMiddlewares: MiddlewareHandler[];
+}
+
+function buildModule(params: BuildModuleParams): Routes {
+  const { api, endpoints, handlers, perHandlerOptions, mountPath, requireComplete, moduleOptions } =
+    params;
+  const errors = api.errors;
+
+  // Every handler must target a real endpoint (catches typos + wrong-api handlers).
+  const unknown = Object.keys(handlers).filter((name) => !(name in endpoints));
+  if (unknown.length > 0) {
+    throw new Error(`Unknown endpoint(s): ${unknown.join(", ")}`);
+  }
+  if (requireComplete) {
+    const missing = Object.keys(endpoints).filter((name) => !(name in handlers));
+    if (missing.length > 0) {
+      throw new Error(`Missing handlers for endpoints: ${missing.join(", ")}`);
+    }
   }
 
-  const sorted = Object.entries(endpoints).sort(([, a], [, b]) =>
-    compareSpecificity(a.path, b.path),
-  );
+  const handled = Object.entries(endpoints)
+    .filter(([name]) => name in handlers)
+    .sort(([, a], [, b]) => compareSpecificity(a.path, b.path));
 
   const buildHono = (globalFactory?: EndpointMiddlewareFactory): Hono => {
     const hono = new Hono();
 
-    for (const [name, endpoint] of sorted) {
+    for (const [name, endpoint] of handled) {
       const handler = handlers[name];
       const handlerOptions = perHandlerOptions[name];
 
       const preMw = globalFactory ? toMiddlewareArray(globalFactory(endpoint)) : [];
       const contractMw = toMiddlewareArray(moduleOptions.middleware?.(endpoint));
-      const allMw = [...preMw, ...groupMiddlewares, ...contractMw];
+      const allMw = [...preMw, ...params.groupMiddlewares, ...contractMw];
 
       hono.on(endpoint.method, [endpoint.path], ...allMw, async (c: Context) => {
         const input: Record<string, unknown> = { c };
 
-        // All framework errors share the contract's error envelope; VALIDATION_ERROR's
-        // details is the normalized `{ path?, message }[]` array of issues.
         const validationError = (issues: ValidationIssue[]) =>
           c.json(errorEnvelope("VALIDATION_ERROR", 400, "Validation failed", issues), 400);
 
@@ -140,9 +166,8 @@ function buildModule(
           try {
             input.params = parseParams(endpoint.params, c.req.param());
           } catch (error) {
-            if (error instanceof AssertError) {
+            if (error instanceof AssertError)
               return validationError(normalizeIssues(error.cause.errors));
-            }
             throw error;
           }
         }
@@ -151,12 +176,10 @@ function buildModule(
           try {
             input.query = parseQuery(endpoint.query, c.req.queries() as Record<string, string[]>);
           } catch (error) {
-            if (error instanceof AssertError) {
+            if (error instanceof AssertError)
               return validationError(normalizeIssues(error.cause.errors));
-            }
-            if (error instanceof QueryNormalizationError) {
+            if (error instanceof QueryNormalizationError)
               return validationError([{ message: error.message }]);
-            }
             throw error;
           }
         }
@@ -165,9 +188,8 @@ function buildModule(
           try {
             input.headers = parseHeaders(endpoint.headers, c.req.header());
           } catch (error) {
-            if (error instanceof AssertError) {
+            if (error instanceof AssertError)
               return validationError(normalizeIssues(error.cause.errors));
-            }
             throw error;
           }
         }
@@ -176,9 +198,8 @@ function buildModule(
           try {
             input.body = parseBody(endpoint.body, await c.req.json());
           } catch (error) {
-            if (error instanceof AssertError) {
+            if (error instanceof AssertError)
               return validationError(normalizeIssues(error.cause.errors));
-            }
             throw error;
           }
         }
@@ -191,9 +212,8 @@ function buildModule(
           result = await handler(input as any);
         } catch (err) {
           if (!(err instanceof ApiError)) throw err;
-          // Only a code declared by THIS contract is serialized here (with details
-          // validation). Framework codes and unrecognized codes bubble to root.onError,
-          // which serializes known codes and routes the rest to onError.
+          // A code declared by the api is serialized here (with details validation).
+          // Framework/unknown codes bubble to root.onError.
           const def = errors?.[err.code];
           if (!def) throw err;
           const emit = (details: unknown) =>
@@ -212,18 +232,12 @@ function buildModule(
           return emit(err.details);
         }
 
-        if (result instanceof Response) {
-          return result;
-        }
+        if (result instanceof Response) return result;
 
         const successCode = endpoint.responseCode ?? 200;
-
         if (shouldValidate && endpoint.response) {
-          // parseResponse throws ResponseValidationError on a mismatch; it bubbles to onError,
-          // which surfaces it to the client as UNKNOWN_ERROR (without leaking why).
           return c.json(parseResponse(endpoint.response, result) as any, successCode as any);
         }
-
         return c.json(result as any, successCode as any);
       });
     }
@@ -232,67 +246,28 @@ function buildModule(
   };
 
   return {
+    __brand: ROUTES_BRAND,
+    _api: api,
     _hono: buildHono(),
     _basePath: mountPath,
-    _endpoints: endpoints,
     _errorCodes: new Set(Object.keys(errors ?? {})),
+    _implemented: handled.map(([name, endpoint]) => ({
+      name,
+      method: endpoint.method,
+      path: joinPath(mountPath, endpoint.path),
+    })),
     _rebuild: buildHono,
   };
 }
 
-// Named group, object handlers or closure
-export function implementContract<
-  C extends Record<string, Endpoint>,
-  N extends Record<string, Contract<any, any>>,
-  K extends keyof N & string,
-  HonoEnv extends Env = Env,
->(
-  contract: Contract<C, any, N>,
-  groupName: K,
-  handlersOrClosure:
-    | HandlerMap<N[K]["endpoints"], HonoEnv>
-    | ((group: GroupBuilder<N[K]["endpoints"], HonoEnv>) => void),
-  options?: ImplementContractOptions<HonoEnv>,
-): RouteModule;
-
-// Unnamed, object handlers or closure
-export function implementContract<C extends Record<string, Endpoint>, HonoEnv extends Env = Env>(
-  contract: Contract<C, any, any>,
-  handlersOrClosure: HandlerMap<C, HonoEnv> | ((group: GroupBuilder<C, HonoEnv>) => void),
-  options?: ImplementContractOptions<HonoEnv>,
-): RouteModule;
-
-export function implementContract(
-  contract: Contract<any, any, any>,
-  arg2: string | Record<string, any> | ((group: any) => void),
-  arg3?: Record<string, any> | ((group: any) => void) | ImplementContractOptions,
-  arg4?: ImplementContractOptions,
-): RouteModule {
+function collectHandlers(handlersOrClosure: Record<string, any> | ((group: any) => void)): {
+  handlers: Record<string, any>;
+  perHandlerOptions: Record<string, HandlerOptions | undefined>;
+  groupMiddlewares: MiddlewareHandler[];
+} {
   const handlers: Record<string, any> = {};
   const perHandlerOptions: Record<string, HandlerOptions | undefined> = {};
   const groupMiddlewares: MiddlewareHandler[] = [];
-
-  let endpoints: Record<string, Endpoint>;
-  let mountPath: string;
-  let options: ImplementContractOptions;
-  let handlersOrClosure: Record<string, any> | ((group: any) => void);
-
-  if (typeof arg2 === "string") {
-    const groupName = arg2;
-    if (!contract.named?.[groupName]) {
-      throw new Error(`No named group "${groupName}" found in contract`);
-    }
-    const groupContract = contract.named[groupName] as Contract<any, any>;
-    endpoints = groupContract.endpoints;
-    mountPath = normalizeMountPath(joinPath(contract.basePath, groupContract.basePath));
-    handlersOrClosure = arg3 as Record<string, any> | ((group: any) => void);
-    options = arg4 ?? {};
-  } else {
-    endpoints = contract.endpoints;
-    mountPath = normalizeMountPath(contract.basePath);
-    handlersOrClosure = arg2;
-    options = (arg3 as ImplementContractOptions | undefined) ?? {};
-  }
 
   if (typeof handlersOrClosure === "function") {
     const group: GroupBuilder<any> = {
@@ -300,6 +275,9 @@ export function implementContract(
         groupMiddlewares.push(middleware);
       },
       implement(name: string, handler: any, handlerOptions?: HandlerOptions) {
+        if (name in handlers) {
+          throw new Error(`Endpoint "${name}" implemented more than once`);
+        }
         handlers[name] = handler;
         if (handlerOptions) perHandlerOptions[name] = handlerOptions;
       },
@@ -309,44 +287,160 @@ export function implementContract(
     Object.assign(handlers, handlersOrClosure);
   }
 
-  return buildModule(
+  return { handlers, perHandlerOptions, groupMiddlewares };
+}
+
+// (a) named — implement the whole contract (object form is compile-time complete).
+export function buildRoutes<
+  G extends Record<string, Contract<any, any>>,
+  K extends keyof G & string,
+  HonoEnv extends Env = Env,
+>(
+  api: Api<G, any>,
+  contractName: K,
+  handlers:
+    | HandlerMap<G[K]["endpoints"], HonoEnv>
+    | ((group: GroupBuilder<G[K]["endpoints"], HonoEnv>) => void),
+  options?: BuildRoutesOptions<HonoEnv>,
+): Routes;
+// (b) unnamed escape hatch — any subset of the api's endpoints (completeness at createHonoApp).
+export function buildRoutes<A extends Api<any, any>, HonoEnv extends Env = Env>(
+  api: A,
+  handlers:
+    | Partial<HandlerMap<A["endpoints"], HonoEnv>>
+    | ((group: GroupBuilder<A["endpoints"], HonoEnv>) => void),
+  options?: BuildRoutesOptions<HonoEnv>,
+): Routes;
+export function buildRoutes(
+  api: Api<any, any>,
+  arg2: string | Record<string, any> | ((group: any) => void),
+  arg3?: Record<string, any> | ((group: any) => void) | BuildRoutesOptions,
+  arg4?: BuildRoutesOptions,
+): Routes {
+  let endpoints: Record<string, Endpoint>;
+  let mountPath: string;
+  let requireComplete: boolean;
+  let handlersOrClosure: Record<string, any> | ((group: any) => void);
+  let options: BuildRoutesOptions;
+
+  if (typeof arg2 === "string") {
+    const group = (api.contracts as Record<string, Contract<any, any>>)[arg2];
+    if (!group) {
+      throw new Error(`No contract "${arg2}" in this api`);
+    }
+    endpoints = group.endpoints as Record<string, Endpoint>;
+    mountPath = normalizeMountPath(joinPath(api.basePath, group.basePath));
+    requireComplete = true;
+    handlersOrClosure = arg3 as Record<string, any> | ((group: any) => void);
+    options = arg4 ?? {};
+  } else {
+    endpoints = api.endpoints as Record<string, Endpoint>;
+    mountPath = normalizeMountPath(api.basePath);
+    requireComplete = false;
+    handlersOrClosure = arg2;
+    options = (arg3 as BuildRoutesOptions | undefined) ?? {};
+  }
+
+  const { handlers, perHandlerOptions, groupMiddlewares } = collectHandlers(handlersOrClosure);
+
+  return buildModule({
+    api,
     endpoints,
     handlers,
     perHandlerOptions,
-    contract.errors,
     mountPath,
-    options,
+    requireComplete,
+    moduleOptions: options,
     groupMiddlewares,
+  });
+}
+
+function isRoutes(value: unknown): value is Routes {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    (value as { __brand?: unknown }).__brand === ROUTES_BRAND
   );
 }
 
-export function createHonoApp<HonoEnv extends Env = Env>(
-  modules: RouteModule[],
-  options?: CreateHonoAppOptions<HonoEnv>,
-): Hono<HonoEnv> {
-  const root = new Hono<HonoEnv>();
+/** Normalizes the `routes` option: an array, or a glob module-record whose exports
+ *  are scanned for `Routes`-branded values. Deduped by identity. */
+function collectRoutes(routes: Routes[] | Record<string, unknown>): Routes[] {
+  const found = new Set<Routes>();
+  const consider = (value: unknown): void => {
+    if (isRoutes(value)) {
+      found.add(value);
+    } else if (value && typeof value === "object") {
+      for (const inner of Object.values(value)) if (isRoutes(inner)) found.add(inner);
+    }
+  };
+  if (Array.isArray(routes)) {
+    for (const r of routes) consider(r);
+  } else {
+    for (const mod of Object.values(routes)) consider(mod);
+  }
+  return [...found];
+}
 
-  // Codes that are "known": the framework's built-ins plus every code declared by
-  // any module's contract. A thrown ApiError with a known code is serialized as-is
-  // (wherever it was thrown); anything else is "unknown" and routed to the hook.
-  const knownCodes = new Set<string>(RESERVED_ERROR_CODES);
-  for (const module of modules) {
-    for (const code of module._errorCodes) knownCodes.add(code);
+/** Asserts, per api: completeness (every endpoint implemented), no double-implement,
+ *  and no (method, path) route conflict across all collected routes. */
+function assertCoverage(routes: Routes[]): void {
+  const byApi = new Map<Api<any, any>, Routes[]>();
+  for (const r of routes) {
+    const list = byApi.get(r._api) ?? [];
+    list.push(r);
+    byApi.set(r._api, list);
   }
 
-  const onError = options?.onError;
+  const seenPath = new Map<string, string>();
+  for (const [api, apiRoutes] of byApi) {
+    const implementedBy = new Set<string>();
+    for (const r of apiRoutes) {
+      for (const impl of r._implemented) {
+        if (implementedBy.has(impl.name)) {
+          throw new Error(`Endpoint "${impl.name}" is implemented more than once`);
+        }
+        implementedBy.add(impl.name);
+        const key = `${impl.method} ${impl.path}`;
+        const prev = seenPath.get(key);
+        if (prev) {
+          throw new Error(`Route conflict: ${key} implemented by "${prev}" and "${impl.name}"`);
+        }
+        seenPath.set(key, impl.name);
+      }
+    }
+    const missing = Object.keys(api.endpoints as Record<string, Endpoint>).filter(
+      (name) => !implementedBy.has(name),
+    );
+    if (missing.length > 0) {
+      throw new Error(
+        `Api at "${api.basePath}" is missing implementations for: ${missing.join(", ")}`,
+      );
+    }
+  }
+}
+
+export function createHonoApp<HonoEnv extends Env = Env>(
+  options: CreateHonoAppOptions<HonoEnv>,
+): Hono<HonoEnv> {
+  const routes = collectRoutes(options.routes);
+  assertCoverage(routes);
+
+  const root = new Hono<HonoEnv>();
+
+  const knownCodes = new Set<string>(RESERVED_ERROR_CODES);
+  for (const r of routes) {
+    for (const code of r._errorCodes) knownCodes.add(code);
+  }
+
+  const onError = options.onError;
   root.onError(async (err, c) => {
-    // A known-code ApiError is a recognized, deliberate contract error — serialize
-    // it as-is. Covers ApiErrors thrown anywhere that bypass the per-route catch
-    // (middleware, services) and framework codes a handler rethrows.
     if (err instanceof ApiError && knownCodes.has(err.code)) {
       return c.json(
         errorEnvelope(err.code, err.status, err.message, err.details) as any,
         err.status as any,
       );
     }
-    // Everything else is unknown: a non-ApiError, or an ApiError with an
-    // unrecognized code. Let the hook map it to a typed error.
     if (onError) {
       try {
         const mapped = await onError(err, c);
@@ -357,23 +451,16 @@ export function createHonoApp<HonoEnv extends Env = Env>(
           );
         }
       } catch {
-        // A throwing onError still yields a safe response — fall through to the
-        // HTTPException passthrough / UNKNOWN_ERROR default below.
+        // A throwing onError still yields a safe response — fall through.
       }
     }
-    // Preserve Hono's own error handling: an HTTPException (from the framework or
-    // middleware such as bearer auth) keeps its status and response instead of
-    // collapsing into UNKNOWN_ERROR. The client surfaces it as a non-handshake
-    // HttpError. Installing this onError otherwise replaces Hono's default, which
-    // would turn an expected 401/403/404 into a 500.
     if (err instanceof HTTPException) {
       return err.getResponse();
     }
-
     return c.json(errorEnvelope("UNKNOWN_ERROR", 500, "Unknown error", undefined), 500);
   });
 
-  const middlewareFactories = options?.middleware
+  const middlewareFactories = options.middleware
     ? Array.isArray(options.middleware)
       ? options.middleware
       : [options.middleware]
@@ -384,9 +471,9 @@ export function createHonoApp<HonoEnv extends Env = Env>(
       ? (endpoint) => middlewareFactories.flatMap((f) => toMiddlewareArray(f(endpoint)))
       : undefined;
 
-  for (const module of modules) {
-    const hono = globalFactory ? module._rebuild(globalFactory) : module._hono;
-    root.route(module._basePath || "/", hono);
+  for (const r of routes) {
+    const hono = globalFactory ? r._rebuild(globalFactory) : r._hono;
+    root.route(r._basePath || "/", hono);
   }
 
   return root;

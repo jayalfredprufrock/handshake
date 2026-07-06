@@ -2,8 +2,8 @@ import { describe, expect, expectTypeOf, test } from "vite-plus/test";
 import * as T from "typebox";
 import type { Static } from "typebox";
 import type { Endpoint } from "../../contract";
-import { createContract } from "../../contract";
-import { implementContract, createHonoApp } from "./index";
+import { createApi, createContract } from "../../contract";
+import { buildRoutes, createHonoApp } from "./index";
 
 const contract = createContract("/api", {
   getUser: {
@@ -20,9 +20,11 @@ const contract = createContract("/api", {
   },
 });
 
+const api = createApi("/", { main: contract });
+
 describe("hono adapter", () => {
   test("provides Hono context in handler input", async () => {
-    const module = implementContract(contract, {
+    const routes = buildRoutes(api, "main", {
       getUser: ({ params, c }) => {
         expect(c.req).toBeDefined();
         expect(c.req.header("x-test")).toBe("hello");
@@ -30,7 +32,7 @@ describe("hono adapter", () => {
       },
       createUser: ({ body }) => ({ id: "1", name: body.name }),
     });
-    const app = createHonoApp([module]);
+    const app = createHonoApp({ routes: [routes] });
 
     const res = await app.request("/api/users/1", {
       headers: { "x-test": "hello" },
@@ -39,11 +41,11 @@ describe("hono adapter", () => {
   });
 
   test("implements all endpoints via object form", async () => {
-    const module = implementContract(contract, {
+    const routes = buildRoutes(api, "main", {
       getUser: ({ params }) => ({ id: params.id, name: "Alice" }),
       createUser: ({ body }) => ({ id: "1", name: body.name }),
     });
-    const app = createHonoApp([module]);
+    const app = createHonoApp({ routes: [routes] });
 
     const res = await app.request("/api/users/1");
     expect(res.status).toBe(200);
@@ -51,11 +53,11 @@ describe("hono adapter", () => {
   });
 
   test("implements all endpoints via closure form", async () => {
-    const module = implementContract(contract, (group) => {
+    const routes = buildRoutes(api, "main", (group) => {
       group.implement("getUser", ({ params }) => ({ id: params.id, name: "Alice" }));
       group.implement("createUser", ({ body }) => ({ id: "1", name: body.name }));
     });
-    const app = createHonoApp([module]);
+    const app = createHonoApp({ routes: [routes] });
 
     const res = await app.request("/api/users/1");
     expect(res.status).toBe(200);
@@ -64,7 +66,7 @@ describe("hono adapter", () => {
 
   test("applies middleware in closure form", async () => {
     const calls: string[] = [];
-    const module = implementContract(contract, (group) => {
+    const routes = buildRoutes(api, "main", (group) => {
       group.use(async (_c, next) => {
         calls.push("middleware");
         await next();
@@ -75,7 +77,7 @@ describe("hono adapter", () => {
       });
       group.implement("createUser", ({ body }) => ({ id: "1", name: body.name }));
     });
-    const app = createHonoApp([module]);
+    const app = createHonoApp({ routes: [routes] });
 
     // param path
     await app.request("/api/users/1");
@@ -104,11 +106,12 @@ describe("hono adapter", () => {
       health: { method: "GET", path: "/health", response: T.Object({ ok: T.Boolean() }) },
     });
 
-    const usersModule = implementContract(usersContract, {
+    const multiApi = createApi("/", { users: usersContract, health: healthContract });
+    const usersModule = buildRoutes(multiApi, "users", {
       getUser: ({ params }) => ({ id: params.id }),
     });
-    const healthModule = implementContract(healthContract, { health: () => ({ ok: true }) });
-    const app = createHonoApp([usersModule, healthModule]);
+    const healthModule = buildRoutes(multiApi, "health", { health: () => ({ ok: true }) });
+    const app = createHonoApp({ routes: [usersModule, healthModule] });
 
     expect((await app.request("/users/1")).status).toBe(200);
     expect((await app.request("/health")).status).toBe(200);
@@ -132,19 +135,18 @@ describe("hono adapter", () => {
     });
 
     test("routes named groups at their basePaths", async () => {
-      const { combineContracts } = await import("../../contract");
-      const combined = combineContracts("/api", {
+      const combined = createApi("/api", {
         users: usersContract,
         posts: postsContract,
       });
 
-      const usersModule = implementContract(combined, "users", {
+      const usersModule = buildRoutes(combined, "users", {
         getUser: ({ params }) => ({ id: params.id, name: "Alice" }),
       });
-      const postsModule = implementContract(combined, "posts", {
+      const postsModule = buildRoutes(combined, "posts", {
         listPosts: () => [],
       });
-      const app = createHonoApp([usersModule, postsModule]);
+      const app = createHonoApp({ routes: [usersModule, postsModule] });
 
       expect((await app.request("/api/users/1")).status).toBe(200);
       expect(await (await app.request("/api/users/1")).json()).toEqual({ id: "1", name: "Alice" });
@@ -152,18 +154,17 @@ describe("hono adapter", () => {
     });
 
     test("named group closure form with middleware", async () => {
-      const { combineContracts } = await import("../../contract");
-      const combined = combineContracts("/api", { users: usersContract });
+      const combined = createApi("/api", { users: usersContract });
 
       const headerValues: string[] = [];
-      const usersModule = implementContract(combined, "users", (group) => {
+      const usersModule = buildRoutes(combined, "users", (group) => {
         group.use(async (c, next) => {
           headerValues.push(c.req.header("x-group") ?? "");
           await next();
         });
         group.implement("getUser", ({ params }) => ({ id: params.id, name: "Alice" }));
       });
-      const app = createHonoApp([usersModule]);
+      const app = createHonoApp({ routes: [usersModule] });
 
       await app.request("/api/users/1", { headers: { "x-group": "users" } });
       expect(headerValues).toEqual(["users"]);
@@ -172,7 +173,7 @@ describe("hono adapter", () => {
 
   describe("type inference", () => {
     test("handler params are typed from contract", () => {
-      implementContract(contract, {
+      buildRoutes(api, "main", {
         getUser: ({ params }) => {
           expectTypeOf(params.id).toEqualTypeOf<string>();
           return { id: params.id, name: "Alice" };
@@ -185,7 +186,7 @@ describe("hono adapter", () => {
     });
 
     test("handler return type matches response schema", () => {
-      implementContract(contract, {
+      buildRoutes(api, "main", {
         getUser: ({ params }) => {
           type Expected = Static<(typeof contract)["endpoints"]["getUser"]["response"]>;
           type Result = { id: string; name: string };
@@ -200,7 +201,7 @@ describe("hono adapter", () => {
   describe("createHonoApp middleware", () => {
     test("runs global middleware for matching endpoints", async () => {
       const calls: string[] = [];
-      const module = implementContract(contract, {
+      const routes = buildRoutes(api, "main", {
         getUser: ({ params }) => {
           calls.push("handler");
           return { id: params.id, name: "Alice" };
@@ -210,7 +211,8 @@ describe("hono adapter", () => {
           return { id: "1", name: body.name };
         },
       });
-      const app = createHonoApp([module], {
+      const app = createHonoApp({
+        routes: [routes],
         middleware: () => async (_c, next) => {
           calls.push("global");
           await next();
@@ -233,7 +235,7 @@ describe("hono adapter", () => {
 
     test("runs global middleware before per-contract middleware", async () => {
       const calls: string[] = [];
-      const module = implementContract(contract, (group) => {
+      const routes = buildRoutes(api, "main", (group) => {
         group.use(async (_c, next) => {
           calls.push("contract");
           await next();
@@ -244,7 +246,8 @@ describe("hono adapter", () => {
         });
         group.implement("createUser", ({ body }) => ({ id: "1", name: body.name }));
       });
-      const app = createHonoApp([module], {
+      const app = createHonoApp({
+        routes: [routes],
         middleware: () => async (_c, next) => {
           calls.push("global");
           await next();
@@ -257,11 +260,12 @@ describe("hono adapter", () => {
 
     test("factory receives endpoint data", async () => {
       const seenEndpoints: Endpoint[] = [];
-      const module = implementContract(contract, {
+      const routes = buildRoutes(api, "main", {
         getUser: ({ params }) => ({ id: params.id, name: "Alice" }),
         createUser: ({ body }) => ({ id: "1", name: body.name }),
       });
-      createHonoApp([module], {
+      createHonoApp({
+        routes: [routes],
         middleware: (endpoint) => {
           seenEndpoints.push(endpoint);
           return undefined;
@@ -274,14 +278,15 @@ describe("hono adapter", () => {
 
     test("accepts an array of factories, applying each in order", async () => {
       const calls: string[] = [];
-      const module = implementContract(contract, {
+      const routes = buildRoutes(api, "main", {
         getUser: ({ params }) => {
           calls.push("handler");
           return { id: params.id, name: "Alice" };
         },
         createUser: ({ body }) => ({ id: "1", name: body.name }),
       });
-      const app = createHonoApp([module], {
+      const app = createHonoApp({
+        routes: [routes],
         middleware: [
           () => async (_c, next) => {
             calls.push("first");
@@ -300,11 +305,12 @@ describe("hono adapter", () => {
 
     test("skips endpoints where factory returns undefined", async () => {
       const calls: string[] = [];
-      const module = implementContract(contract, {
+      const routes = buildRoutes(api, "main", {
         getUser: ({ params }) => ({ id: params.id, name: "Alice" }),
         createUser: ({ body }) => ({ id: "1", name: body.name }),
       });
-      const app = createHonoApp([module], {
+      const app = createHonoApp({
+        routes: [routes],
         middleware: (endpoint) => {
           if (endpoint.method === "GET") {
             return async (_c, next) => {
@@ -326,9 +332,9 @@ describe("hono adapter", () => {
     });
   });
 
-  test("throws at implementContract time when a handler is missing", () => {
+  test("throws at build time when a handler is missing", () => {
     expect(() => {
-      implementContract(contract, {
+      buildRoutes(api, "main", {
         getUser: () => ({ id: "1", name: "Alice" }),
         // createUser missing
       } as any);

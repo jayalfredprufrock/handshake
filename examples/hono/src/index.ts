@@ -1,10 +1,10 @@
 import { serve } from "@hono/node-server";
-import { implementContract, createHonoApp } from "@jayalfredprufrock/handshake/hono";
-import { contract } from "@jayalfredprufrock/handshake-example-contract";
+import { buildRoutes, createHonoApp } from "@jayalfredprufrock/handshake/hono";
+import { api } from "@jayalfredprufrock/handshake-example-contract";
 import type { Static } from "typebox/type";
 
 // In-memory store
-const users = new Map<string, Static<typeof contract.endpoints.getUser.response>>();
+const users = new Map<string, Static<typeof api.endpoints.getUser.response>>();
 let nextId = 1;
 
 // Seed some data
@@ -12,7 +12,7 @@ users.set("1", { id: "1", name: "Alice", email: "alic@example.com" });
 users.set("2", { id: "2", name: "Bob", email: "bob@example.com" });
 nextId = 3;
 
-const module = implementContract(contract, {
+const routes = buildRoutes(api, "users", {
   getUser: ({ params }) => {
     const user = users.get(params.id);
     if (!user) {
@@ -36,7 +36,7 @@ const module = implementContract(contract, {
   },
 });
 
-const app = createHonoApp([module]);
+const app = createHonoApp({ routes: [routes] });
 
 serve({ fetch: app.fetch, port: 3000 }, (info) => {
   console.log(`Server running at http://localhost:${info.port}`);

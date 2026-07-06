@@ -148,7 +148,9 @@ export function runAdapterTests(createAdapter: AdapterFactory) {
         const api = createAdapter(crudContract);
         api.handle("getUser", ({ params }: any) => ({ id: params.id, name: "Alice" }));
 
-        expect(() => api.build()).toThrow(/Missing handlers for endpoints/);
+        // hono reports this at createHonoApp ("missing implementations"), nestjs at build()
+        // ("Missing handlers"); both throw when an endpoint has no handler.
+        expect(() => api.build()).toThrow(/missing/i);
       });
 
       test("throws when registering unknown endpoint", () => {

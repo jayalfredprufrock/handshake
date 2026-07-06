@@ -1,9 +1,9 @@
 ---
 title: Hono
-description: Server adapter for Hono — bind contracts to typed, validated handlers.
+description: Server adapter for Hono — bind an api to typed, validated handlers.
 ---
 
-The Hono adapter binds a contract to typed handlers and assembles a Hono app. It parses and validates requests, serializes responses, and gives you a uniform error envelope.
+The Hono adapter binds an api to typed handlers and assembles a Hono app. It parses and validates requests, serializes responses, and gives you a uniform error envelope.
 
 ## Installation
 
@@ -13,53 +13,63 @@ npm install @jayalfredprufrock/handshake hono typebox
 
 ## Basic Usage
 
-`implementContract` binds handlers to a contract and returns a `RouteModule`; `createHonoApp` assembles one or more modules into a `Hono` instance.
+`buildRoutes` binds handlers to an api's endpoints and returns an opaque `Routes` bundle; `createHonoApp` assembles one or more bundles into a `Hono` instance. The adapter always consumes an [`Api`](/handshake/core/contracts/) — the composed unit, never a bare contract.
 
 ```ts
 import { serve } from "@hono/node-server";
-import { implementContract, createHonoApp } from "@jayalfredprufrock/handshake/hono";
-import { contract } from "./contract";
+import { buildRoutes, createHonoApp } from "@jayalfredprufrock/handshake/hono";
+import { api } from "./contract";
 
-const module = implementContract(contract, {
+const routes = buildRoutes(api, "users", {
   getUser: ({ params }) => {
     const user = users.get(params.id);
-    if (!user) throw contract.error("NOT_FOUND", "user not found");
+    if (!user) throw api.error("NOT_FOUND", "user not found");
     return user;
   },
   listUsers: () => [...users.values()],
+  createUser: ({ body }) => users.create(body),
+  deleteUser: ({ params }) => {
+    users.delete(params.id);
+    return { id: params.id };
+  },
 });
 
-const app = createHonoApp([module]);
+const app = createHonoApp({ routes: [routes] });
 serve({ fetch: app.fetch, port: 3000 });
 ```
 
-`implementContract` throws immediately if any endpoint is missing a handler.
+The named form implements one whole group, so `buildRoutes` throws immediately if any of the group's endpoints is missing a handler.
 
-## `implementContract(contract, handlers | closure, options?)`
+## `buildRoutes(api, "group", handlers | closure, options?)`
 
-Pass a handler map, or a closure for per-group middleware:
+The **named form** takes a group name from the api and implements that group. The object form is compile-time complete — every endpoint must have a handler. Pass a closure instead for per-group middleware:
 
 ```ts
-const module = implementContract(contract, (group) => {
+const routes = buildRoutes(api, "users", (group) => {
   group.use(bearerAuth({ token: process.env.API_TOKEN! }));
-  group.implement("getUser", ({ params }) => ({ id: params.id, name: "Alice" }), {
+  group.implement("getUser", ({ params }) => ({ id: params.id, name: "Alice", email: "a@b.c" }), {
     validateResponse: false, // per-handler override
   });
+  // …`implement` the group's remaining endpoints
 });
 ```
 
-For a [combined contract](/handshake/core/contracts/#splitting-contracts-across-files) built with the named-object form, pass the group name first:
+The closure form must still implement the whole group; completeness is asserted when the app is assembled.
+
+### Flat escape hatch
+
+`buildRoutes(api, handlers | closure, options?)` — omit the group name to implement **any subset** of the api's endpoints by their (api-unique) names. This is useful for splitting one api's routes across files; completeness is enforced later, at `createHonoApp`.
 
 ```ts
-const usersModule = implementContract(contract, "users", {
-  getUser: ({ params }) => ({ id: params.id, name: "Alice" }),
+const routes = buildRoutes(api, {
+  getUser: ({ params }) => ({ id: params.id, name: "Alice", email: "a@b.c" }),
 });
 ```
 
 ### Options
 
 ```ts
-interface ImplementContractOptions {
+interface BuildRoutesOptions {
   validateResponse?: boolean; // default true; governs both success and error response validation
   middleware?: EndpointMiddlewareFactory;
 }
@@ -97,25 +107,42 @@ getUser: ({ params, headers, c }) => {
 
 ## Error handling
 
-Every error the server emits is an `ApiError` (`{ code, status, message, details }`). Throw a declared error with `contract.error("CODE", message, details?)` (or `new ApiError({ code, status, message, details })`); the `details` of a declared code are validated against its `details` schema before being sent. On the wire the response is a fixed envelope — `{ kind: "HANDSHAKE", code, status, message, details }` — matching the `ApiError` itself. The client reconstructs it, so `err.message` round-trips; the same `message` is available to `onError` as `err.message`.
+Every error the server emits is an `ApiError` (`{ code, status, message, details }`). Throw a declared error with `api.error("CODE", message, details?)` (or `new ApiError({ code, status, message, details })`); the `details` of a declared code are validated against its `details` schema before being sent. On the wire the response is a fixed envelope — `{ kind: "HANDSHAKE", code, status, message, details }` — matching the `ApiError` itself. The client reconstructs it, so `err.message` round-trips; the same `message` is available to `onError` as `err.message`.
 
-A thrown `ApiError` whose `code` is **recognized** — declared in a contract, or a built-in `VALIDATION_ERROR`/`UNKNOWN_ERROR` — is serialized to its envelope **wherever it's thrown** (a handler, a middleware, a service), with no `onError` handling required. An `ApiError` with an _unrecognized_ code is treated as unknown and routed to `onError` (see below).
+A thrown `ApiError` whose `code` is **recognized** — declared by the api, or a built-in `VALIDATION_ERROR`/`UNKNOWN_ERROR` — is serialized to its envelope **wherever it's thrown** (a handler, a middleware, a service), with no `onError` handling required. An `ApiError` with an _unrecognized_ code is treated as unknown and routed to `onError` (see below).
 
 Two codes are **reserved** and emitted by the framework:
 
 - **`VALIDATION_ERROR`** (400) — a request failed validation; `details` is a normalized `{ path?, keyword?, message }[]` array of issues.
 - **`UNKNOWN_ERROR`** (500) — an unexpected error, or a handler response that failed validation. The cause is never sent to the client; inspect or log it in `onError`. (The library never writes to the console itself.)
 
-You can't _declare_ these in a contract's error map, but they're always throwable via `contract.error` (`contract.error("VALIDATION_ERROR", msg, issues?)` — the `issues` array is optional, e.g. `contract.error("VALIDATION_ERROR", "Phone number is invalid")` — and `contract.error("UNKNOWN_ERROR", msg)`) and matched by `contract.isError` — the client may receive them from any endpoint.
+You can't _declare_ these in an api's error map, but they're always throwable via `api.error` (`api.error("VALIDATION_ERROR", msg, issues?)` — the `issues` array is optional, e.g. `api.error("VALIDATION_ERROR", "Phone number is invalid")` — and `api.error("UNKNOWN_ERROR", msg)`) and matched by `api.isError` — the client may receive them from any endpoint.
 
-### `createHonoApp(modules, options?)`
+### `createHonoApp({ routes, onError?, middleware? })`
+
+`createHonoApp` takes a single options object:
 
 ```ts
 interface CreateHonoAppOptions {
+  routes: Routes[] | Record<string, unknown>;
   onError?: (err: unknown, c: Context) => ApiError | void | Promise<ApiError | void>;
   middleware?: EndpointMiddlewareFactory | EndpointMiddlewareFactory[];
 }
 ```
+
+At assembly, `createHonoApp` asserts — **per api** — that every endpoint is implemented **exactly once** and that no two routes collide on `(method, path)`. A missing handler, a double implementation, or a route conflict throws here, so an incompletely-served api can't start.
+
+#### File-based registration
+
+`routes` accepts either an explicit `Routes[]` array or an eager `import.meta.glob(..., { eager: true })` module-record. Every `Routes`-branded export across the matched modules is collected and deduped by identity, so you can drop a `*.routes.ts` file into a directory and have it registered without editing a central list:
+
+```ts
+const app = createHonoApp({
+  routes: import.meta.glob("./routes/*.routes.ts", { eager: true }),
+});
+```
+
+#### `onError`
 
 `onError` handles any error the framework didn't already serialize as a recognized contract error. A **known-code** `ApiError` is serialized automatically and never reaches `onError`; **everything else** does — plain exceptions, Hono `HTTPException`s, and `ApiError`s with an unrecognized code. Return an `ApiError` to shape the response, or return nothing for the default disposition:
 
@@ -128,7 +155,8 @@ The server can **never** emit a non-`ApiError` body, regardless of what `onError
 import { ApiError } from "@jayalfredprufrock/handshake/contract";
 import { ResponseValidationError } from "@jayalfredprufrock/handshake/server";
 
-const app = createHonoApp([module], {
+const app = createHonoApp({
+  routes: [routes],
   onError: (err) => {
     if (err instanceof ResponseValidationError) log.alert("contract drift", err.issues);
     if (err instanceof DatabaseError) metrics.inc("db_error");
@@ -146,9 +174,10 @@ A Hono `HTTPException` — thrown by the framework or by middleware (e.g. bearer
 ```ts
 import { HTTPException } from "hono/http-exception";
 
-const app = createHonoApp([module], {
+const app = createHonoApp({
+  routes: [routes],
   onError: (err) =>
-    err instanceof HTTPException ? contract.error("UNAUTHORIZED", err.message) : undefined,
+    err instanceof HTTPException ? api.error("UNAUTHORIZED", err.message) : undefined,
 });
 ```
 
@@ -164,7 +193,7 @@ import { logger } from "hono/logger";
 
 const root = new Hono();
 root.use("*", logger());
-root.route("/", createHonoApp([usersModule, postsModule]));
+root.route("/", createHonoApp({ routes: [usersRoutes, postsRoutes] }));
 ```
 
 ## Route ordering

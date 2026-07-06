@@ -1,5 +1,5 @@
 import type { TSchema } from "typebox";
-import type { Contract, Endpoint, InferSchema } from "../contract";
+import type { Api, Endpoint, InferSchema } from "../contract";
 import { ApiError, isErrorEnvelope } from "../contract";
 import { HttpError } from "./http-error";
 
@@ -119,12 +119,11 @@ export interface FetchClientConfig {
   retry?: (ctx: RetryContext) => RetryDecision | void | Promise<RetryDecision | void>;
 }
 
-export type ClientOf<Ct extends Contract<any, any, any>> =
-  Ct extends Contract<infer C, any, any>
-    ? {
-        [E in keyof C as C[E]["internal"] extends true ? never : E]: C[E] & ClientEndpoint<C[E]>;
-      } & { $contract: Ct }
-    : never;
+export type ClientOf<A extends Api<any, any>> = {
+  [E in keyof A["endpoints"] as A["endpoints"][E]["internal"] extends true
+    ? never
+    : E]: A["endpoints"][E] & ClientEndpoint<A["endpoints"][E]>;
+} & { $api: A };
 
 const extractArgs = (endpoint: Endpoint, args: any[]) => {
   const extractedArgs: Record<string, any> = {};
@@ -326,16 +325,16 @@ async function runRequest(
   throw ctx.error;
 }
 
-export const createFetchClient = <Ct extends Contract<any, any, any>>(
-  contract: Ct,
+export const createFetchClient = <A extends Api<any, any>>(
+  api: A,
   config: FetchClientConfig,
-): ClientOf<Ct> => {
+): ClientOf<A> => {
   const fetchImpl = config.fetch ?? globalThis.fetch;
-  const basePath = contract.basePath === "/" ? "" : contract.basePath;
+  const basePath = api.basePath === "/" ? "" : api.basePath;
 
-  const client: Record<string, unknown> = { $contract: contract };
+  const client: Record<string, unknown> = { $api: api };
 
-  for (const [name, endpoint] of Object.entries(contract.endpoints as Record<string, Endpoint>)) {
+  for (const [name, endpoint] of Object.entries(api.endpoints as Record<string, Endpoint>)) {
     if (endpoint.internal) continue;
     const func = (...args: any[]) => {
       const { body, options, params } = extractArgs(endpoint, args);
@@ -354,7 +353,7 @@ export const createFetchClient = <Ct extends Contract<any, any, any>>(
     client[name] = func;
   }
 
-  return client as ClientOf<Ct>;
+  return client as ClientOf<A>;
 };
 
 export type StaticEndpoint<E extends Endpoint> = {

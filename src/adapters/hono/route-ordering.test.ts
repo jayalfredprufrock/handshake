@@ -1,7 +1,7 @@
 import { describe, expect, test } from "vite-plus/test";
 import * as T from "typebox";
-import { createContract } from "../../contract";
-import { implementContract, createHonoApp } from "./index";
+import { createApi, createContract } from "../../contract";
+import { buildRoutes, createHonoApp } from "./index";
 
 describe("route ordering", () => {
   test("literal segment wins over param at the same position", async () => {
@@ -19,11 +19,12 @@ describe("route ordering", () => {
       },
     });
 
-    const module = implementContract(contract, {
+    const api = createApi("/", { users: contract });
+    const routes = buildRoutes(api, "users", {
       getUser: ({ params }) => ({ source: "param" as const, id: params.id }),
       getMe: () => ({ source: "literal" as const, id: "me" as const }),
     });
-    const app = createHonoApp([module]);
+    const app = createHonoApp({ routes: [routes] });
 
     const res = await app.request("/users/me");
     expect(res.status).toBe(200);
@@ -45,11 +46,12 @@ describe("route ordering", () => {
       },
     });
 
-    const module = implementContract(contract, {
+    const api = createApi("/", { users: contract });
+    const routes = buildRoutes(api, "users", {
       getUser: ({ params }) => ({ source: "param" as const, id: params.id }),
       getMe: () => ({ source: "literal" as const, id: "me" as const }),
     });
-    const app = createHonoApp([module]);
+    const app = createHonoApp({ routes: [routes] });
 
     const res = await app.request("/users/42");
     expect(res.status).toBe(200);
@@ -71,11 +73,12 @@ describe("route ordering", () => {
       },
     });
 
-    const module = implementContract(contract, {
+    const api = createApi("/", { users: contract });
+    const routes = buildRoutes(api, "users", {
       getUser: () => ({ source: "param" }),
       getMe: () => ({ source: "literal" }),
     });
-    const app = createHonoApp([module]);
+    const app = createHonoApp({ routes: [routes] });
 
     const res = await app.request("/users/me");
     expect(res.status).toBe(200);
@@ -97,11 +100,12 @@ describe("route ordering", () => {
       },
     });
 
-    const module = implementContract(contract, {
+    const api = createApi("/", { posts: contract });
+    const routes = buildRoutes(api, "posts", {
       userPosts: () => ({ route: "userPosts" as const }),
       myPosts: () => ({ route: "myPosts" as const }),
     });
-    const app = createHonoApp([module]);
+    const app = createHonoApp({ routes: [routes] });
 
     const meRes = await app.request("/users/me/posts");
     expect(await meRes.json()).toEqual({ route: "myPosts" });

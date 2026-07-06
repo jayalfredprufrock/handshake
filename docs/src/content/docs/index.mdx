@@ -22,7 +22,7 @@ import { Card, CardGrid } from "@astrojs/starlight/components";
 
 ## What is Handshake?
 
-Handshake is a contract-first API library for TypeScript. You define your endpoints once using [TypeBox](https://github.com/sinclairzx81/typebox) schemas, then use that contract to create type-safe server handlers and HTTP clients. Both sides stay in sync through TypeScript's type system — no code generation or compile step needed.
+Handshake is a contract-first API library for TypeScript. You define each resource once using [TypeBox](https://github.com/sinclairzx81/typebox) schemas, compose those contracts into a single api, then use that api to create type-safe server handlers and HTTP clients. Both sides stay in sync through TypeScript's type system — no code generation or compile step needed.
 
 <CardGrid>
   <Card title="Contract-first" icon="document">
@@ -46,34 +46,37 @@ Handshake is a contract-first API library for TypeScript. You define your endpoi
 ## Quick Example
 
 ```ts
-import { createContract } from "@jayalfredprufrock/handshake/contract";
+import { createApi, createContract } from "@jayalfredprufrock/handshake/contract";
 import { Type } from "typebox";
 
-// Define once
-const contract = createContract("/api", {
+// Define a resource contract — endpoints relative to the group's base path
+const users = createContract("/users", {
   getUser: {
     method: "GET",
-    path: "/users/:id",
+    path: "/:id",
     params: Type.Object({ id: Type.String() }),
     response: Type.Object({ id: Type.String(), name: Type.String() }),
   },
 });
+
+// Compose the api — the single unit servers, clients, and OpenAPI consume
+const api = createApi("/api", { users });
 ```
 
 ```ts
 // Server — fully typed handlers
-import { implementContract, createHonoApp } from "@jayalfredprufrock/handshake/hono";
+import { buildRoutes, createHonoApp } from "@jayalfredprufrock/handshake/hono";
 
-const module = implementContract(contract, {
+const routes = buildRoutes(api, "users", {
   getUser: ({ params }) => ({ id: params.id, name: "Alice" }), // params.id is typed as string
 });
-const app = createHonoApp([module]);
+const app = createHonoApp({ routes: [routes] });
 ```
 
 ```ts
 // Client — fully typed methods (fetch defaults to globalThis.fetch)
 import { createFetchClient } from "@jayalfredprufrock/handshake/client";
 
-const api = createFetchClient(contract, { baseUrl: "http://localhost:3000" });
-const user = await api.getUser({ id: "1" }); // { id: string, name: string }
+const client = createFetchClient(api, { baseUrl: "http://localhost:3000" });
+const user = await client.getUser({ id: "1" }); // { id: string, name: string }
 ```

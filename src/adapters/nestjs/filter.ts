@@ -71,7 +71,7 @@ export class HandshakeExceptionFilter implements ExceptionFilter {
     if ((RESERVED_ERROR_CODES as readonly string[]).includes(code)) return true;
     if (this.options.knownCodes?.has(code)) return true;
     const meta = req[HANDSHAKE_REQ_META] as HandshakeMeta | undefined;
-    const errors = meta?.contract.errors;
+    const errors = meta?.api.errors;
     return errors ? code in errors : false;
   }
 

@@ -3,7 +3,7 @@ title: Contracts
 description: Define your API shape using createContract and TypeBox schemas.
 ---
 
-A contract is the single source of truth for your API. It defines every endpoint — method, path, params, query, headers, body, and response — plus the errors the API can return. Both the server adapter and the client are derived from it.
+A contract defines one resource — every endpoint (method, path, params, query, headers, body, and response) plus the errors those endpoints can return. Contracts are building blocks: you compose one or more of them into an **api** with [`createApi`](#composing-contracts-into-an-api), and that api is the single source of truth the server adapter, client, and OpenAPI generator are all derived from.
 
 ## Creating a Contract
 
@@ -85,7 +85,7 @@ With that in place:
 - **Declared keys are typed** everywhere `meta` is read — `endpoint.meta.auth` is `boolean`, `meta.scope` is `string | undefined`.
 - **A required key makes `meta` required on every endpoint.** Declaring `auth: boolean` (no `?`) means an endpoint with no `meta`, or a `meta` missing `auth`, is a compile error. Declare keys as optional (`auth?`) to keep `meta` itself optional.
 - **Extra keys are still allowed.** `EndpointMeta` extends `Record<string, any>`, so augmentation is additive — you can still attach ad-hoc keys beyond the ones you declared.
-- **Contract-level default `meta`** (below) is typed against this same interface.
+- **Contract- and api-level default `meta`** (below) are typed against this same interface.
 
 ### `internal`
 
@@ -159,24 +159,56 @@ const contract = createContract("/api", endpoints, {
 
 A route that declares its own `meta` overrides the matching keys and adds any extra ones; a route without `meta` inherits the default as-is.
 
-## Splitting Contracts Across Files
+## Composing Contracts into an Api
 
-Define each resource's contract in its own file and combine them with `combineContracts`:
+Handshake has a two-layer model. You **define** each resource's endpoints with `createContract` — typically one file per resource — and then **compose** those contracts into an api with `createApi`. A bare `Contract` is only a building block; the `Api` is the single unit the server adapter, fetch client, and OpenAPI generator consume.
+
+`createApi` takes a **named record** of contracts (there is no array form) and returns the composed api:
 
 ```ts
+// contracts/users.ts
+export const usersContract = createContract("/users", {
+  /* ... */
+});
+
+// contracts/posts.ts
+export const postsContract = createContract("/posts", {
+  /* ... */
+});
+
 // contracts/index.ts
-import { combineContracts } from "@jayalfredprufrock/handshake/contract";
+import { createApi } from "@jayalfredprufrock/handshake/contract";
 import { usersContract } from "./users";
 import { postsContract } from "./posts";
 
-// array form (no named groups)
-export const contract = combineContracts("/api", [usersContract, postsContract]);
-
-// named-object form — keys become group names used by implementContract
-export const named = combineContracts("/api", {
+export const api = createApi("/api", {
   users: usersContract,
   posts: postsContract,
 });
 ```
 
-Like `createContract`, the base path is the optional first argument (defaults to `"/"`); passing options requires an explicit base path. Each endpoint's `path` is prefixed with its source contract's `basePath`, so the final URL is `topBasePath + subBasePath + endpointPath`. Duplicate endpoint names throw. The options object also accepts contract-wide `errors`, `headers`, and a default `meta`, which merge across all combined routes (route-level values win on conflict).
+The keys (`users`, `posts`) become **group names** — the server adapter implements one group at a time by name (e.g. `buildRoutes(api, "users", …)`). Like `createContract`, the base path is the optional first argument (defaults to `"/"`); passing options requires an explicit base path. Each endpoint's `path` is prefixed with its source contract's `basePath`, so the final URL is `api.basePath + contract.basePath + endpointPath` (e.g. `/api` + `/users` + `/:id` → `/api/users/:id`). Endpoint names must be unique across all groups — `createApi` throws on a duplicate.
+
+Even a single resource is wrapped in an api — that api, not the contract, is what you hand to an adapter, the client, or the OpenAPI generator:
+
+```ts
+export const api = createApi("/api", { users: usersContract });
+```
+
+### Api-level errors, headers, and meta
+
+`createApi` accepts the same `{ errors, headers, meta }` options as `createContract`, applied as cross-cutting defaults across **every** route in **every** group:
+
+```ts
+export const api = createApi(
+  "/api",
+  { users: usersContract, posts: postsContract },
+  {
+    errors: { UNAUTHORIZED: { status: 401 } },
+    headers: Type.Object({ authorization: Type.String() }),
+    meta: { auth: true },
+  },
+);
+```
+
+These merge with each contract's own errors/headers/meta, with the innermost value winning: route beats contract-default beats api-default. Declared errors from every group are merged too, and the api re-exposes `api.error(...)` / `api.isError(...)` typed over that full merged set.

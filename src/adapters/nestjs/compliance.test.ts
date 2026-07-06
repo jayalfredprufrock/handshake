@@ -3,10 +3,11 @@ import { Controller } from "@nestjs/common";
 import type { INestApplication } from "@nestjs/common";
 import { Test } from "@nestjs/testing";
 import { afterEach } from "vite-plus/test";
-import type { Contract } from "../../contract";
+import type { Api } from "../../contract";
+import { createApi } from "../../contract";
 import { runAdapterTests } from "../../server/testing";
 import type { AdapterOptions, HandlerOptions } from "../../server";
-import { HandshakeHandler, HandshakeModule, HandshakeReq } from "./index";
+import { ApiHandler, ApiInput, HandshakeModule } from "./index";
 
 type HandlerEntry = { handler: (...args: any[]) => any; options?: HandlerOptions };
 
@@ -18,9 +19,9 @@ afterEach(async () => {
   }
 });
 
-/** Builds a controller class from registered handlers, applying the handshake decorators programmatically. */
+/** Builds a controller class from registered handlers, applying the api decorators programmatically. */
 function buildController(
-  contract: Contract<any, any, any>,
+  api: Api<any, any>,
   handlers: Record<string, HandlerEntry>,
 ): new () => unknown {
   class DynamicController {}
@@ -36,38 +37,35 @@ function buildController(
       configurable: true,
     });
     const descriptor = Object.getOwnPropertyDescriptor(DynamicController.prototype, name)!;
-    HandshakeHandler(contract, name as never, entry.options)(
-      DynamicController.prototype,
-      name,
-      descriptor,
-    );
-    HandshakeReq()(DynamicController.prototype, name, 0);
+    ApiHandler(api, name as never, entry.options)(DynamicController.prototype, name, descriptor);
+    ApiInput()(DynamicController.prototype, name, 0);
   }
 
   Controller()(DynamicController);
   return DynamicController as new () => unknown;
 }
 
-runAdapterTests((contract: Contract<any, any, any>, options?: AdapterOptions) => {
+runAdapterTests((contract, options?: AdapterOptions) => {
+  const api = createApi("/", { main: contract });
   const handlers: Record<string, HandlerEntry> = {};
 
   return {
     handle(name: string, handler: (...args: any[]) => any, handlerOptions?: HandlerOptions) {
-      if (!(name in contract.endpoints)) {
+      if (!(name in api.endpoints)) {
         throw new Error(`Unknown endpoint "${name}" — not defined in contract`);
       }
       handlers[name] = { handler, options: handlerOptions };
     },
     build() {
-      const missing = Object.keys(contract.endpoints).filter((name) => !(name in handlers));
+      const missing = Object.keys(api.endpoints).filter((name) => !(name in handlers));
       if (missing.length > 0) {
         throw new Error(`Missing handlers for endpoints: ${missing.join(", ")}`);
       }
 
-      const ControllerClass = buildController(contract, handlers);
+      const ControllerClass = buildController(api, handlers);
       const ready = (async () => {
         const moduleRef = await Test.createTestingModule({
-          imports: [HandshakeModule.forRoot({ ...options, contracts: [contract] })],
+          imports: [HandshakeModule.forRoot({ ...options, apis: [api] })],
           controllers: [ControllerClass],
         }).compile();
         const app = moduleRef.createNestApplication();

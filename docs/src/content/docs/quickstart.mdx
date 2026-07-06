@@ -17,77 +17,78 @@ npm install hono
 
 ## 1. Define a Contract
 
-A contract describes every endpoint in your API. Create a shared file that both your server and client will import.
+Each resource is its own contract — a group of endpoints relative to the group's base path. Compose those contracts into a single **api** with `createApi`; the api is the one unit your server and client both import.
 
 ```ts
 // contract.ts
-import { createContract } from "@jayalfredprufrock/handshake/contract";
+import { createApi, createContract } from "@jayalfredprufrock/handshake/contract";
 import { Type } from "typebox";
 
-export const contract = createContract("/api", {
+const User = Type.Object({
+  id: Type.String(),
+  name: Type.String(),
+  email: Type.String(),
+});
+
+// A resource contract — endpoint paths are relative to the group's base path
+export const users = createContract("/users", {
   getUser: {
     method: "GET",
-    path: "/users/:id",
+    path: "/:id",
     params: Type.Object({ id: Type.String() }),
-    response: Type.Object({
-      id: Type.String(),
-      name: Type.String(),
-      email: Type.String(),
-    }),
+    response: User,
   },
 
   listUsers: {
     method: "GET",
-    path: "/users",
-    response: Type.Array(
-      Type.Object({
-        id: Type.String(),
-        name: Type.String(),
-        email: Type.String(),
-      }),
-    ),
+    path: "/",
+    response: Type.Array(User),
   },
 
   createUser: {
     method: "POST",
-    path: "/users",
+    path: "/",
     body: Type.Object({
       name: Type.String(),
       email: Type.String(),
     }),
-    response: Type.Object({
-      id: Type.String(),
-      name: Type.String(),
-      email: Type.String(),
-    }),
+    response: User,
   },
 
   deleteUser: {
     method: "DELETE",
-    path: "/users/:id",
+    path: "/:id",
     params: Type.Object({ id: Type.String() }),
     response: Type.Object({ id: Type.String() }),
   },
 });
+
+// The composed api — routes resolve to /api/users, /api/users/:id, etc.
+export const api = createApi("/api", { users });
 ```
 
 ## 2. Create a Server
 
-Use `implementContract` to bind handlers to the contract, then assemble the app with `createHonoApp`. Every endpoint must have a handler — `implementContract` throws if any is missing.
+Use `buildRoutes(api, "group", handlers)` to bind handlers to a named group, then assemble the app with `createHonoApp`. Every endpoint in the group must have a handler — `buildRoutes` throws if any is missing.
 
 ```ts
 // server.ts
 import { serve } from "@hono/node-server";
-import { implementContract, createHonoApp } from "@jayalfredprufrock/handshake/hono";
-import { contract } from "./contract";
+import { buildRoutes, createHonoApp } from "@jayalfredprufrock/handshake/hono";
+import { api } from "./contract";
 
 const users = new Map<string, { id: string; name: string; email: string }>();
 let nextId = 1;
 
-const module = implementContract(contract, {
+const routes = buildRoutes(api, "users", {
   getUser: ({ params }) => {
     const user = users.get(params.id);
-    if (!user) throw contract.error("NOT_FOUND", "user not found"); // requires a NOT_FOUND error in the contract
+    if (!user) {
+      return new Response(JSON.stringify({ error: "User not found" }), {
+        status: 404,
+        headers: { "content-type": "application/json" },
+      });
+    }
     return user;
   },
   listUsers: () => [...users.values()],
@@ -103,27 +104,27 @@ const module = implementContract(contract, {
   },
 });
 
-const app = createHonoApp([module]);
+const app = createHonoApp({ routes: [routes] });
 serve({ fetch: app.fetch, port: 3000 });
 ```
 
-Handler inputs are fully typed — `params`, `query`, `headers`, and `body` are inferred from the contract. Returning a value that doesn't match the response schema is a compile-time error.
+Handler inputs are fully typed — `params`, `query`, `headers`, and `body` are inferred from the api. Returning a value that doesn't match the response schema is a compile-time error. (To send a typed error envelope instead of a raw `Response`, declare an error on the api and `throw api.error("NOT_FOUND", ...)`.)
 
 ## 3. Create a Client
 
-The client is generated directly from the contract. Each endpoint becomes a typed method.
+The client is generated directly from the api. Each endpoint becomes a typed method.
 
 ```ts
 // client.ts
 import { createFetchClient } from "@jayalfredprufrock/handshake/client";
-import { contract } from "./contract";
+import { api } from "./contract";
 
-const api = createFetchClient(contract, { baseUrl: "http://localhost:3000" });
+const client = createFetchClient(api, { baseUrl: "http://localhost:3000" });
 
-const users = await api.listUsers();
-const created = await api.createUser({ name: "Alice", email: "alice@example.com" });
-const user = await api.getUser({ id: created.id });
-await api.deleteUser({ id: created.id });
+const users = await client.listUsers();
+const created = await client.createUser({ name: "Alice", email: "alice@example.com" });
+const user = await client.getUser({ id: created.id });
+await client.deleteUser({ id: created.id });
 ```
 
 `fetch` defaults to `globalThis.fetch`. Method signatures adapt to the endpoint — params first, body next, and an `options` object (`query`, `headers`, `request`) last.

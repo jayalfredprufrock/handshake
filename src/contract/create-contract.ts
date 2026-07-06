@@ -96,11 +96,14 @@ type IsAny<T> = 0 extends 1 & T ? true : false;
  * optional third is the code's `details` payload. Uncallable when the contract
  * declares no errors (`Code` resolves to `never`).
  */
-export type ErrorFactory<Entry extends ErrorEntry = never> = <Code extends Entry["code"]>(
-  code: Code,
-  message: string,
-  ...details: DetailsArg<Extract<Entry, { code: Code }>["details"]>
-) => ApiError<Code & string, Extract<Entry, { code: Code }>["details"]>;
+export type ErrorFactory<Entry extends ErrorEntry = never> =
+  IsAny<Entry> extends true
+    ? (code: any, message: string, ...details: any[]) => ApiError<any, any>
+    : <Code extends Entry["code"]>(
+        code: Code,
+        message: string,
+        ...details: DetailsArg<Extract<Entry, { code: Code }>["details"]>
+      ) => ApiError<Code & string, Extract<Entry, { code: Code }>["details"]>;
 
 /** Recognizes and narrows a caught error against the contract's declared errors. */
 export type ErrorGuard<Entry extends ErrorEntry = never> =
@@ -122,33 +125,26 @@ export type ErrorGuard<Entry extends ErrorEntry = never> =
           : ApiErrorOf<Extract<Entry, { code: Code }>>;
       };
 
+/**
+ * A single resource: a set of endpoints under a base path, its declared errors,
+ * and the typed `error`/`isError` helpers. Groups are composed into an {@link Api}
+ * with {@link createApi}; the adapters, client, and OpenAPI consume the `Api`, not
+ * a bare `Contract`.
+ */
 export interface Contract<
   C extends Record<string, Endpoint> = Record<string, Endpoint>,
   Entry extends ErrorEntry = never,
-  N extends Record<string, Contract<any, any>> | undefined = undefined,
 > {
   basePath: string;
   endpoints: C;
   errors?: ErrorMap;
-  named?: N;
-  /** Phantom field carrying the error-entry union for inference; never set at runtime. */
-  readonly __entry?: Entry;
-}
-
-/** The error helpers attached to a contract: a typed factory and guard. */
-export interface ContractApi<Entry extends ErrorEntry = never> {
   /** Constructs a typed `ApiError` from a declared error code; throw the result. */
   error: ErrorFactory<Entry>;
   /** Type guard for the contract's errors, with an optional `code` overload. */
   isError: ErrorGuard<Entry>;
+  /** Phantom field carrying the error-entry union for inference; never set at runtime. */
+  readonly __entry?: Entry;
 }
-
-/** A contract together with its `error`/`isError` helpers (the shape `createContract` returns). */
-export type ContractWithApi<
-  C extends Record<string, Endpoint> = Record<string, Endpoint>,
-  Entry extends ErrorEntry = never,
-  N extends Record<string, Contract<any, any>> | undefined = undefined,
-> = Contract<C, Entry, N> & ContractApi<Entry>;
 
 export interface ContractOptions<
   E extends ErrorMap | undefined = undefined,
@@ -170,7 +166,7 @@ export type MergeHeaders<
 
 /** Composes contract-level headers into every endpoint's `headers`. */
 export type WithContractHeaders<
-  C extends Record<string, Endpoint>,
+  C extends Record<string, any>,
   H extends TSchema | undefined,
 > = H extends TSchema
   ? {
@@ -203,7 +199,7 @@ export type MergeMeta<Base extends EndpointMeta, Route> = Route extends Endpoint
 
 /** Composes a contract-level default meta into every endpoint's `meta`. */
 export type WithContractMeta<
-  C extends Record<string, Endpoint>,
+  C extends Record<string, any>,
   M extends EndpointMeta | undefined,
 > = M extends EndpointMeta
   ? {
@@ -266,19 +262,24 @@ export function makeErrorFactory<const E extends ErrorMap | undefined = undefine
   return error as ErrorFactory<ContractEntries<E>>;
 }
 
+export function makeIsError(): (err: unknown, code?: string | readonly string[]) => boolean {
+  return (err: unknown, code?: string | readonly string[]): boolean =>
+    err instanceof ApiError &&
+    (code === undefined ? true : Array.isArray(code) ? code.includes(err.code) : err.code === code);
+}
+
 export function buildContract(
   basePath: string,
   endpoints: Record<string, Endpoint>,
   errors: ErrorMap | undefined,
-  named?: Record<string, Contract<any, any>>,
-): ContractWithApi<any, any, any> {
-  const error = makeErrorFactory(errors);
-
-  const isError = (err: unknown, code?: string | readonly string[]): boolean =>
-    err instanceof ApiError &&
-    (code === undefined ? true : Array.isArray(code) ? code.includes(err.code) : err.code === code);
-
-  return { basePath, endpoints, errors, named, error, isError } as ContractWithApi<any, any, any>;
+): Contract<any, any> {
+  return {
+    basePath,
+    endpoints,
+    errors,
+    error: makeErrorFactory(errors),
+    isError: makeIsError(),
+  } as Contract<any, any>;
 }
 
 /**
@@ -299,11 +300,11 @@ export type ExactEndpoints<C extends Record<string, Endpoint>> = {
 
 export function createContract<const C extends Record<string, Endpoint>>(
   endpoints: ExactEndpoints<C>,
-): ContractWithApi<C, FrameworkEntries>;
+): Contract<C, FrameworkEntries>;
 export function createContract<const C extends Record<string, Endpoint>>(
   basePath: string,
   endpoints: ExactEndpoints<C>,
-): ContractWithApi<C, FrameworkEntries>;
+): Contract<C, FrameworkEntries>;
 export function createContract<
   const C extends Record<string, Endpoint>,
   E extends ErrorMap | undefined = undefined,
@@ -313,7 +314,7 @@ export function createContract<
   basePath: string,
   endpoints: ExactEndpoints<C>,
   options: ContractOptions<E, H, M>,
-): ContractWithApi<WithContractMeta<WithContractHeaders<C, H>, M>, ContractEntries<E>>;
+): Contract<WithContractMeta<WithContractHeaders<C, H>, M>, ContractEntries<E>>;
 export function createContract(
   basePathOrEndpoints: string | Record<string, Endpoint>,
   endpointsOrOptions?: Record<string, Endpoint> | ContractOptions<any, any, any>,
@@ -335,7 +336,12 @@ export function createContract(
   );
 }
 
-export type ContractSchema<C extends Contract<any, any, any>> = {
+/** Anything endpoint-bearing — a {@link Contract} or an {@link Api}. */
+export interface HasEndpoints {
+  endpoints: Record<string, Endpoint>;
+}
+
+export type ContractSchema<C extends HasEndpoints> = {
   [E in keyof C["endpoints"]]: {
     body: InferSchema<C["endpoints"][E]["body"]>;
     response: InferSchema<C["endpoints"][E]["response"]>;
@@ -344,18 +350,18 @@ export type ContractSchema<C extends Contract<any, any, any>> = {
   };
 };
 
-export type ContractBody<C extends Contract<any, any, any>> = {
+export type ContractBody<C extends HasEndpoints> = {
   [E in keyof C["endpoints"]]: InferSchema<C["endpoints"][E]["body"]>;
 };
 
-export type ContractResponse<C extends Contract<any, any, any>> = {
+export type ContractResponse<C extends HasEndpoints> = {
   [E in keyof C["endpoints"]]: InferSchema<C["endpoints"][E]["response"]>;
 };
 
-export type ContractParams<C extends Contract<any, any, any>> = {
+export type ContractParams<C extends HasEndpoints> = {
   [E in keyof C["endpoints"]]: InferSchema<C["endpoints"][E]["params"]>;
 };
 
-export type ContractQuery<C extends Contract<any, any, any>> = {
+export type ContractQuery<C extends HasEndpoints> = {
   [E in keyof C["endpoints"]]: InferSchema<C["endpoints"][E]["query"]>;
 };

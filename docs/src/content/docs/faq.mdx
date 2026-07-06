@@ -20,20 +20,20 @@ Handshake takes a different approach: it works with standard HTTP methods and pa
 Both Handshake and [ts-rest](https://ts-rest.com) are contract-first libraries for TypeScript APIs. The main differences:
 
 - **Schema library**: ts-rest supports Zod, Valibot, and Arktype. Handshake uses TypeBox exclusively (for now), which produces standard JSON Schema.
-- **Server adapters**: ts-rest supports Express, Fastify, NestJS, and Next.js. Handshake currently supports Hono, with more adapters planned.
+- **Server adapters**: ts-rest supports Express, Fastify, NestJS, and Next.js. Handshake currently supports Hono and NestJS, with more adapters planned.
 - **Validation approach**: Handshake has distinct validation pipelines per input type — params and query get type coercion, bodies reject extra properties strictly, and responses strip unknown fields by default.
 
 ## Can I use Handshake without a server adapter?
 
-Yes. The contract and client packages are independent of any server framework. You can define a contract and use `createFetchClient` to consume any existing REST API that conforms to the contract's shape. The server adapter is optional.
+Yes. The contract and client packages are independent of any server framework. You can compose an api and use `createFetchClient` to consume any existing REST API that conforms to the api's shape. The server adapter is optional.
 
-## Can I generate OpenAPI from a contract?
+## Can I generate OpenAPI from an api?
 
-Not yet, but this is a planned feature. Since Handshake contracts use TypeBox (which produces JSON Schema), generating OpenAPI specs is a natural fit.
+Yes. `@jayalfredprufrock/handshake/openapi` turns an api into an [OpenAPI 3.1](/handshake/tooling/openapi/) document — paths, parameters, request/response bodies, and every error — with no code generation. Since Handshake uses TypeBox (which produces JSON Schema), the schemas map directly onto the spec.
 
-## What server frameworks will be supported?
+## What server frameworks are supported?
 
-Hono is the first supported framework. Support for additional frameworks like NestJS, Express, and Fastify is planned.
+Hono and NestJS are supported today. Support for additional frameworks like Express and Fastify is planned.
 
 ## Does Handshake work in the browser?
 
