@@ -1,6 +1,11 @@
 import type { TSchema } from "typebox";
 import type {
   Contract,
+  ContractBody,
+  ContractParams,
+  ContractQuery,
+  ContractResponse,
+  ContractSchema,
   Endpoint,
   EndpointMeta,
   EntriesOf,
@@ -8,6 +13,7 @@ import type {
   ErrorFactory,
   ErrorGuard,
   ErrorMap,
+  HasEndpoints,
   WithContractHeaders,
   WithContractMeta,
 } from "./create-contract";
@@ -181,3 +187,15 @@ export function createApi(
     isError: makeIsError(),
   } as Api<any, any>;
 }
+
+/**
+ * `Api`-oriented aliases for the endpoint-shape extractors. The composed {@link Api}
+ * is the unit these are most often applied to, so these read more naturally than the
+ * `Contract*` originals — but, like them, they accept any {@link HasEndpoints} (a bare
+ * {@link Contract} or an {@link Api}).
+ */
+export type ApiSchema<A extends HasEndpoints> = ContractSchema<A>;
+export type ApiBody<A extends HasEndpoints> = ContractBody<A>;
+export type ApiResponse<A extends HasEndpoints> = ContractResponse<A>;
+export type ApiParams<A extends HasEndpoints> = ContractParams<A>;
+export type ApiQuery<A extends HasEndpoints> = ContractQuery<A>;
