@@ -11,17 +11,42 @@ import type { ValidationIssue } from "../contract";
  */
 export function normalizeIssues(raw: unknown): ValidationIssue[] {
   if (!Array.isArray(raw)) return [];
-  return raw.map((entry): ValidationIssue => {
-    const issue = entry as { instancePath?: unknown; keyword?: unknown; message?: unknown };
+  return raw.flatMap((entry): ValidationIssue[] => {
+    const issue = entry as {
+      instancePath?: unknown;
+      keyword?: unknown;
+      message?: unknown;
+      params?: unknown;
+    };
     const message = typeof issue.message === "string" ? issue.message : "Invalid value";
+    const basePath =
+      typeof issue.instancePath === "string" && issue.instancePath !== ""
+        ? issue.instancePath.replace(/^\//, "").replace(/\//g, ".")
+        : undefined;
+    const keyword = typeof issue.keyword === "string" ? issue.keyword : undefined;
+
+    // `additionalProperties` errors report the offending keys in `params` and
+    // anchor `instancePath` at the parent object (root → empty). Expand them into
+    // one issue per rejected property so the client learns each field by name.
+    if (keyword === "additionalProperties") {
+      const extras = (issue.params as { additionalProperties?: unknown } | undefined)
+        ?.additionalProperties;
+      const keys = Array.isArray(extras)
+        ? extras.filter((k): k is string => typeof k === "string")
+        : [];
+      if (keys.length > 0) {
+        return keys.map((key) => ({
+          path: basePath ? `${basePath}.${key}` : key,
+          keyword,
+          message,
+        }));
+      }
+    }
+
     const result: ValidationIssue = { message };
-    if (typeof issue.instancePath === "string" && issue.instancePath !== "") {
-      result.path = issue.instancePath.replace(/^\//, "").replace(/\//g, ".");
-    }
-    if (typeof issue.keyword === "string") {
-      result.keyword = issue.keyword;
-    }
-    return result;
+    if (basePath !== undefined) result.path = basePath;
+    if (keyword !== undefined) result.keyword = keyword;
+    return [result];
   });
 }
 
