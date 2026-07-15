@@ -126,12 +126,32 @@ export function parseHeaders(schema: TSchema, raw: Record<string, string>): unkn
 }
 
 /**
+ * Applies `additionalProperties: false` where it is meaningful: directly on object
+ * schemas (those declaring `properties`), and recursively across `anyOf` members so
+ * union bodies stay closed per-variant. Applying it at the ROOT of a union is wrong —
+ * `additionalProperties` only consults sibling `properties`, and a bare `anyOf` has
+ * none, so every property in the body would be rejected as "additional". Other shapes
+ * (e.g. `allOf`) pass through untouched: closing intersect members independently makes
+ * the schema unsatisfiable instead of strict.
+ */
+function closeProperties(schema: TSchema): TSchema {
+  if (Array.isArray((schema as { anyOf?: TSchema[] }).anyOf)) {
+    const anyOf = (schema as { anyOf: TSchema[] }).anyOf.map(closeProperties);
+    return { ...schema, anyOf } as TSchema;
+  }
+  if ((schema as { properties?: unknown }).properties) {
+    return { ...schema, additionalProperties: false } as TSchema;
+  }
+  return schema;
+}
+
+/**
  * Parses and validates a request body against a schema.
  * Rejects missing or extra properties. No coercion is performed.
  */
 export function parseBody(schema: TSchema, raw: unknown): unknown {
   const value = T.Default(schema, raw);
-  T.Assert({ ...schema, additionalProperties: false } as TSchema, value);
+  T.Assert(closeProperties(schema), value);
   return value;
 }
 
