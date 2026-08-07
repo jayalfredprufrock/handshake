@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vite-plus/test";
 import * as T from "typebox";
+import type { OpenAPIV3_1 } from "openapi-types";
 import { createApi, createContract } from "../contract";
 import { generateOpenApi } from "./index";
 
@@ -88,6 +89,8 @@ describe("generateOpenApi", () => {
       type: "object",
       required: ["name"],
       properties: { name: { type: "string" } },
+      // Mirrors the strictness `parseBody` enforces at runtime.
+      additionalProperties: false,
     });
   });
 
@@ -178,5 +181,127 @@ describe("generateOpenApi", () => {
     const out = generateOpenApi(c, { info: { title: "x", version: "1" } });
     expect(out.paths).toHaveProperty(["/api/ping"]);
     expect(out.paths).not.toHaveProperty(["/api/purge"]);
+  });
+});
+
+describe("generateOpenApi request body strictness", () => {
+  const bodyOf = (out: OpenAPIV3_1.Document, path: string): any =>
+    (out.paths?.[path] as any)?.post?.requestBody?.content["application/json"].schema;
+
+  const specFor = (body: T.TSchema): OpenAPIV3_1.Document =>
+    generateOpenApi(
+      createApi("/api", {
+        g: createContract("/", {
+          write: { method: "POST", path: "/w", body, response: T.Object({ ok: T.Boolean() }) },
+        }),
+      }),
+      { info: { title: "x", version: "1" } },
+    );
+
+  test("documents the additionalProperties: false the server enforces", () => {
+    const out = specFor(T.Object({ name: T.String() }));
+    expect(bodyOf(out, "/api/w").additionalProperties).toBe(false);
+  });
+
+  test("preserves an author's additionalProperties opt-out", () => {
+    const out = specFor(T.Object({ name: T.String() }, { additionalProperties: true }));
+    expect(bodyOf(out, "/api/w").additionalProperties).toBe(true);
+  });
+
+  test("documents closedness per union variant", () => {
+    const out = specFor(
+      T.Union([
+        T.Object({ type: T.Literal("OPEN"), x: T.String() }, { additionalProperties: true }),
+        T.Object({ type: T.Literal("CLOSED"), x: T.String() }),
+      ]),
+    );
+    const variants = bodyOf(out, "/api/w").anyOf;
+    expect(variants.map((v: any) => v.additionalProperties)).toEqual([true, false]);
+  });
+
+  test("closes nested objects and array items, not just the root", () => {
+    const out = specFor(
+      T.Object({
+        n: T.Object({ a: T.String() }),
+        items: T.Array(T.Object({ b: T.String() })),
+      }),
+    );
+    const body = bodyOf(out, "/api/w");
+    expect(body.additionalProperties).toBe(false);
+    expect(body.properties.n.additionalProperties).toBe(false);
+    expect(body.properties.items.items.additionalProperties).toBe(false);
+  });
+
+  test("documents responses as closed — Clean strips at every depth", () => {
+    const out = specFor(T.Object({ name: T.String() }));
+    const response = (out.paths!["/api/w"] as any).post.responses["200"].content["application/json"]
+      .schema;
+    expect(response.additionalProperties).toBe(false);
+  });
+
+  test("overrides a response's declared additionalProperties in the spec too", () => {
+    // `parseResponse` force-closes, so an opt-out must not be advertised to clients.
+    const out = generateOpenApi(
+      createApi("/api", {
+        g: createContract("/", {
+          read: {
+            method: "GET",
+            path: "/r",
+            response: T.Object({ a: T.String() }, { additionalProperties: true }),
+          },
+        }),
+      }),
+      { info: { title: "x", version: "1" } },
+    );
+    const response = (out.paths!["/api/r"] as any).get.responses["200"].content["application/json"]
+      .schema;
+    expect(response.additionalProperties).toBe(false);
+  });
+
+  test("shares a $id component when request and response close identically", () => {
+    // Neither declares additionalProperties, so both modes yield `false` — the component
+    // stays reusable and both operations may $ref it.
+    const Shared = T.Object({ name: T.String() }, { $id: "Shared" });
+    const out = generateOpenApi(
+      createApi("/api", {
+        g: createContract("/", {
+          read: { method: "GET", path: "/r", response: Shared },
+          write: {
+            method: "POST",
+            path: "/w",
+            body: Shared,
+            response: T.Object({ ok: T.Boolean() }),
+          },
+        }),
+      }),
+      { info: { title: "x", version: "1" } },
+    );
+    expect(out.components?.schemas?.Shared).toMatchObject({ additionalProperties: false });
+    expect(bodyOf(out, "/api/w")).toEqual({ $ref: "#/components/schemas/Shared" });
+  });
+
+  test("inlines a $id schema whose closed form differs between request and response", () => {
+    // A declared `true` is kept for the body but overridden for the response, so the two
+    // cannot share one component — the diverging node sheds its `$id` and inlines.
+    const Open = T.Object({ name: T.String() }, { $id: "Open", additionalProperties: true });
+    const out = generateOpenApi(
+      createApi("/api", {
+        g: createContract("/", {
+          read: { method: "GET", path: "/r", response: Open },
+          write: {
+            method: "POST",
+            path: "/w",
+            body: Open,
+            response: T.Object({ ok: T.Boolean() }),
+          },
+        }),
+      }),
+      { info: { title: "x", version: "1" } },
+    );
+    const response = (out.paths!["/api/r"] as any).get.responses["200"].content["application/json"]
+      .schema;
+    expect(out.components?.schemas).not.toHaveProperty("Open");
+    expect(bodyOf(out, "/api/w")).toMatchObject({ additionalProperties: true });
+    expect(response).toMatchObject({ additionalProperties: false });
   });
 });

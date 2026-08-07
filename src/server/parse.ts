@@ -1,6 +1,7 @@
 import type { TSchema } from "typebox";
 import * as T from "typebox/value";
 import type { ValidationIssue } from "../contract";
+import { closeProperties } from "../utils/close-properties";
 
 /**
  * Normalizes raw TypeBox assertion errors (`AssertError.cause.errors`) into the
@@ -101,53 +102,43 @@ function normalizeQueryValues(
 
 /**
  * Parses and validates path parameters against a schema.
- * Coerces string values to the types specified by the schema.
+ * Coerces string values to the types specified by the schema, and rejects undeclared
+ * params unless the schema opts out via its own `additionalProperties`.
  */
 export function parseParams(schema: TSchema, raw: Record<string, string>): unknown {
-  return paramsPipeline(schema, raw);
+  return paramsPipeline(closeProperties(schema), raw);
 }
 
 /**
  * Parses and validates query parameters against a schema.
  * Handles array normalization (repeated keys → arrays for array schemas,
- * single values for scalar schemas) and coerces string values.
+ * single values for scalar schemas) and coerces string values. Undeclared query
+ * parameters are rejected unless the schema opts out via its own `additionalProperties`.
  */
 export function parseQuery(schema: TSchema, raw: Record<string, string[]>): unknown {
+  // Normalized against the original schema: closing changes what is *allowed*, not how
+  // repeated keys collapse into arrays.
   const normalized = normalizeQueryValues(schema, raw);
-  return queryPipeline(schema, normalized);
+  return queryPipeline(closeProperties(schema), normalized);
 }
 
 /**
  * Parses and validates request headers against a schema. Coerces string values and
  * ignores headers not named in the schema (a request always carries many).
+ *
+ * Deliberately NOT closed, unlike every other request input: a real request carries
+ * dozens of headers nobody declares (`accept`, `user-agent`, tracing, proxy headers), so
+ * closing the root would reject essentially every request. Nested objects are closed,
+ * though header values are strings in practice.
  */
 export function parseHeaders(schema: TSchema, raw: Record<string, string>): unknown {
   return paramsPipeline(schema, raw);
 }
 
 /**
- * Applies `additionalProperties: false` where it is meaningful: directly on object
- * schemas (those declaring `properties`), and recursively across `anyOf` members so
- * union bodies stay closed per-variant. Applying it at the ROOT of a union is wrong —
- * `additionalProperties` only consults sibling `properties`, and a bare `anyOf` has
- * none, so every property in the body would be rejected as "additional". Other shapes
- * (e.g. `allOf`) pass through untouched: closing intersect members independently makes
- * the schema unsatisfiable instead of strict.
- */
-function closeProperties(schema: TSchema): TSchema {
-  if (Array.isArray((schema as { anyOf?: TSchema[] }).anyOf)) {
-    const anyOf = (schema as { anyOf: TSchema[] }).anyOf.map(closeProperties);
-    return { ...schema, anyOf } as TSchema;
-  }
-  if ((schema as { properties?: unknown }).properties) {
-    return { ...schema, additionalProperties: false } as TSchema;
-  }
-  return schema;
-}
-
-/**
  * Parses and validates a request body against a schema.
- * Rejects missing or extra properties. No coercion is performed.
+ * Rejects missing properties, and extra ones unless the schema opts out via its own
+ * `additionalProperties`. No coercion is performed.
  */
 export function parseBody(schema: TSchema, raw: unknown): unknown {
   const value = T.Default(schema, raw);
@@ -170,11 +161,18 @@ export class ResponseValidationError extends Error {
 /**
  * Validates a handler response against a schema. Strips unknown properties, then throws a
  * {@link ResponseValidationError} if the known properties don't match.
+ *
+ * Closing is FORCED here, overriding any `additionalProperties` the schema declares. A
+ * declared `true` would otherwise defeat `Clean` at that node and send undeclared
+ * properties to the client — a data leak, not a feature. Stripping (rather than rejecting)
+ * means the override cannot break a caller. `Type.Record`/`Type.Unknown` remain the way to
+ * return genuinely dynamic payloads, since neither declares `properties`.
  */
 export function parseResponse(schema: TSchema, raw: unknown): unknown {
-  const value = T.Clean(schema, raw);
+  const closed = closeProperties(schema, { mode: "force" });
+  const value = T.Clean(closed, raw);
   try {
-    T.Assert(schema, value);
+    T.Assert(closed, value);
   } catch (err) {
     if (err instanceof T.AssertError) {
       throw new ResponseValidationError(err.cause.errors);

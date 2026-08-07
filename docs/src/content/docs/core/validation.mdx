@@ -7,6 +7,38 @@ Handshake validates all incoming request data and outgoing responses using [Type
 
 All errors share a single `{ kind: "HANDSHAKE", code, status, message, details }` envelope. A failed **request** validation returns a **400** `VALIDATION_ERROR`; a failed **response** validation is a server bug and returns a **500** `UNKNOWN_ERROR` (the reason is never sent to the client — inspect it via `onError`). See [error handling](/handshake/server/hono/#error-handling).
 
+## Undeclared properties
+
+Handshake is strict about properties your schemas don't declare, **recursively** — at every depth, not just the top level. TypeBox itself is permissive here (an object schema with no `additionalProperties` accepts extra keys), so this strictness comes from Handshake, not from TypeBox.
+
+| Input        | Undeclared properties | Opt-out                       |
+| ------------ | --------------------- | ----------------------------- |
+| Body         | **rejected** (400)    | yes — `additionalProperties`  |
+| Query        | **rejected** (400)    | yes — `additionalProperties`  |
+| Path params  | **rejected** (400)    | yes — `additionalProperties`  |
+| Headers      | ignored               | n/a — always open at the root |
+| **Response** | **silently stripped** | **no — always enforced**      |
+
+Requests honor an explicit `additionalProperties` because an open request schema is a deliberate choice by the author, and only widens what a client may send:
+
+```ts
+// Extra properties pass through untouched
+body: Type.Object({ name: Type.String() }, { additionalProperties: true });
+
+// Extra properties are allowed, but must be numbers
+body: Type.Object({ name: Type.String() }, { additionalProperties: Type.Number() });
+```
+
+**Responses do not.** `additionalProperties` is always forced to `false` on the way out, overriding whatever the schema declares. An open response schema means the server sends the client properties it never declared — a data leak rather than a feature. Because responses are _stripped_ rather than rejected, this override can never break a caller.
+
+Three notes that apply everywhere:
+
+- Only object nodes (those declaring `properties`) are closed. `Type.Record` (which uses `patternProperties`) and `Type.Unknown`/`Type.Any` are left alone, and are the supported way to model a genuinely dynamic payload — in a request or a response.
+- `Type.Intersect` members stay open at their own root. `additionalProperties` consults only its sibling `properties`, so closing each member independently would make the intersection unsatisfiable rather than strict. Objects nested inside the members are still closed.
+- TypeBox mapped types such as `Type.Partial()` and `Type.Pick()` **drop** the `additionalProperties` option from their source schema. Re-declare it on the result if you need an opt-out preserved.
+
+Headers are the one deliberate exception: a real request carries dozens of headers nobody declares (`accept`, `user-agent`, tracing and proxy headers), so closing the root would reject essentially every request. Only the headers you declare are validated; the rest are ignored.
+
 ## Path Parameters
 
 Path parameters arrive from the framework as strings. The params pipeline applies three steps:
@@ -70,7 +102,7 @@ Invalid or missing required query params return a **400** `VALIDATION_ERROR`.
 
 ## Headers
 
-Request headers run the same Default → Convert → Assert pipeline as path params (header values arrive as strings and are coerced). The schema is **non-strict** — only the headers you declare are validated; the request's many other headers are ignored.
+Request headers run the same Default → Convert → Assert pipeline as path params (header values arrive as strings and are coerced). Alone among request inputs, the header schema is **non-strict** at the root — only the headers you declare are validated; the request's many other headers are ignored. See [Undeclared properties](#undeclared-properties) for why.
 
 Header names must be declared in **lowercase** (the framework reads them lowercased):
 
@@ -85,7 +117,7 @@ A missing or invalid declared header returns a **400** `VALIDATION_ERROR`.
 Request bodies are assumed to be JSON objects. The body pipeline is intentionally strict:
 
 1. **Default** — applies any default values defined in the schema
-2. **Assert** — validates the value with `additionalProperties: false`
+2. **Assert** — validates the value, defaulting `additionalProperties` to `false`
 
 There is no coercion step — values must already be the correct type (unlike params and query which arrive as strings). This strictness means:
 
@@ -97,16 +129,21 @@ All three produce a **400** `VALIDATION_ERROR`.
 
 Optional properties (defined with `Type.Optional()`) are allowed to be absent.
 
+Extra properties are rejected at every depth, and the schema may opt out — see [Undeclared properties](#undeclared-properties). For unions, the default (and any opt-out) applies **per variant**, so one variant can be open while another stays closed.
+
+The generated OpenAPI document applies the same defaulting, so the published spec advertises exactly the strictness the server enforces — see [OpenAPI](/handshake/tooling/openapi/#request-and-response-strictness).
+
 ## Response Validation
 
 Response validation ensures that handlers return data matching the contract. It runs a different pipeline than request validation:
 
-1. **Clean** — strips any properties not defined in the schema (silently, without error)
+1. **Clean** — strips any properties not defined in the schema (silently, without error), with `additionalProperties` forced to `false` at every depth
 2. **Assert** — validates that all remaining properties match the expected types
 
 This means:
 
-- Extra properties in the handler's return value are **silently removed** before sending
+- Extra properties in the handler's return value are **silently removed** before sending — including nested objects, array items, and union variants
+- A declared `additionalProperties` is **overridden**, not honored. Without this, a schema declaring `true` would pass undeclared properties straight through to the client. Use `Type.Record`/`Type.Unknown` for genuinely dynamic payloads. See [Undeclared properties](#undeclared-properties).
 - Wrong types or missing required properties are treated as a **server bug**: the client receives a **500** `UNKNOWN_ERROR` (the reason is never leaked), and `onError` can detect it via `ResponseValidationError` (to log or alert).
 
 ### Configuring Response Validation

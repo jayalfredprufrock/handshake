@@ -60,6 +60,12 @@ const User = Type.Object({ id: Type.String(), name: Type.String() }, { $id: "Use
 // → components/schemas/User, referenced wherever User is used
 ```
 
+### Request and response strictness
+
+Request bodies, parameters, and responses are emitted with the same `additionalProperties` handling the server enforces at runtime (see [Validation](/handshake/core/validation/#undeclared-properties)), so a generated client can't produce a body the server will reject, and can't be told to expect properties the server strips. Requests are documented with their declared `additionalProperties` preserved; responses are always documented as `additionalProperties: false`, matching the override `parseResponse` applies.
+
+One consequence for `$id` schemas: a node whose closed form **differs** between request and response — i.e. it declares an `additionalProperties` other than `false` — sheds its `$id` and is **inlined** rather than hoisted to `components/schemas`. Such a node is closed as a response but left as declared as a request, so a single shared component could not describe both, and which form got emitted would depend on conversion order. Schemas that close identically in both directions (the overwhelmingly common case, where nothing is declared) keep their `$id` and stay reusable via `$ref`.
+
 ### Errors
 
 Errors are **api-wide** — the union of every group's declared errors plus any declared on the api itself — so every operation documents the full set: the framework `VALIDATION_ERROR` (400) and `UNKNOWN_ERROR` (500), plus every declared error. Each is emitted as a named envelope schema (`{ kind, code, status, message, details }`) in `components/schemas`, and grouped into a shared response per status under `components/responses`. When multiple codes share a status, the response body is a `oneOf` with a `code` discriminator:

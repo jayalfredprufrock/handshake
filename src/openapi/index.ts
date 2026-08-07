@@ -1,6 +1,7 @@
 import type { OpenAPIV3_1 } from "openapi-types";
 import type { Api, Endpoint, ErrorMap } from "../contract";
 import { HANDSHAKE_ERROR_KIND, joinPath } from "../contract";
+import { closeProperties } from "../utils/close-properties";
 import { SchemaRegistry } from "./schema";
 import type { Schema } from "./schema";
 
@@ -153,8 +154,12 @@ function decomposeParameters(
   registry: SchemaRegistry,
 ): OpenAPIV3_1.ParameterObject[] {
   if (!schema) return [];
-  const properties = (schema as { properties?: Record<string, unknown> }).properties ?? {};
-  const required = new Set((schema as { required?: string[] }).required ?? []);
+  // Each parameter is emitted separately, so the root's own `additionalProperties` has no
+  // representation here — but nested object schemas inside a parameter do, and the runtime
+  // closes them. Headers stay open at the root either way (see `parseHeaders`).
+  const closed = closeProperties(schema, { dropSharedIds: true });
+  const properties = (closed as { properties?: Record<string, unknown> }).properties ?? {};
+  const required = new Set((closed as { required?: string[] }).required ?? []);
   return Object.entries(properties).map(
     ([name, propSchema]): OpenAPIV3_1.ParameterObject => ({
       name,
@@ -214,7 +219,15 @@ function buildOperation(
   const responses: Record<string, OpenAPIV3_1.ResponseObject | ReferenceObject> = {
     [String(endpoint.responseCode ?? 200)]: {
       description: "Successful response",
-      content: { "application/json": { schema: registry.convert(endpoint.response) } },
+      // Force-closed to match `parseResponse`, which strips undeclared properties at every
+      // depth regardless of what the schema declares.
+      content: {
+        "application/json": {
+          schema: registry.convert(
+            closeProperties(endpoint.response, { mode: "force", dropSharedIds: true }),
+          ),
+        },
+      },
     },
     ...errorRefs,
   };
@@ -228,7 +241,13 @@ function buildOperation(
       ? {
           requestBody: {
             required: true,
-            content: { "application/json": { schema: registry.convert(endpoint.body) } },
+            // Closed with the same helper `parseBody` uses, so the spec advertises exactly
+            // the strictness the server enforces — including an author's opt-out.
+            content: {
+              "application/json": {
+                schema: registry.convert(closeProperties(endpoint.body, { dropSharedIds: true })),
+              },
+            },
           },
         }
       : {}),
