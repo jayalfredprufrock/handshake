@@ -107,13 +107,14 @@ type ListUsers = ClientEndpoint<typeof contract.endpoints.listUsers>;
 
 ## `ClientOptions<E>`
 
-The options type for a client method call: `query` (from the endpoint's query schema), `headers` (from its headers schema), and `request` (passthrough `RequestInit` fields). The `query` and `headers` fields are **required only when their schema has a required property**, and `ClientEndpoint`'s trailing `options` argument is required only when `ClientOptions` has any required field.
+The options type for a client method call: `query` (from the endpoint's query schema), `headers` (from its headers schema, or free-form `HeadersInit` when the endpoint declares none), the flattened fetch fields of `ClientCallInit` (`signal`, `credentials`, `cache`, …), and `request` (escape hatch for the remaining `RequestInit` fields). The `query` and `headers` fields are **required only when their schema has a required property**, and `ClientEndpoint`'s trailing `options` argument is required only when `ClientOptions` has any required field.
 
 ```ts
 import type { ClientOptions } from "@jayalfredprufrock/handshake/client";
 
 type ListOptions = ClientOptions<typeof contract.endpoints.listUsers>;
-// { query?: { limit?: number }; request?: Omit<RequestInit, "method" | "body"> }
+// { query?: { limit?: number } } & ClientCallInit
+// → { query?: { limit?: number }; signal?: AbortSignal; credentials?: …; request?: … }
 ```
 
 ## `DeepPick` / `DeepOmit`

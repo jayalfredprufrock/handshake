@@ -96,7 +96,7 @@ client.createUser(body, options); // body only
 client.listUsers(options); // neither
 ```
 
-The `options` argument — and each of its fields (`query`, `headers`) — is **required only when the corresponding schema has a required property**, and optional otherwise.
+The `options` argument — and each of its schema-derived fields (`query`, `headers`) — is **required only when the corresponding schema has a required property**, and optional otherwise. Everything else on it is optional.
 
 ## Client Options
 
@@ -104,9 +104,23 @@ The `options` argument — and each of its fields (`query`, `headers`) — is **
 interface ClientOptions<E extends Endpoint> {
   query?: InferSchema<E["query"]>;
   headers?: InferSchema<E["headers"]>;
+
+  // Fetch RequestInit fields, passed directly
+  signal?: AbortSignal;
+  credentials?: RequestCredentials;
+  cache?: RequestCache;
+  mode?: RequestMode;
+  redirect?: RequestRedirect;
+  keepalive?: boolean;
+  integrity?: string;
+  referrer?: string;
+  referrerPolicy?: ReferrerPolicy;
+
   request?: Omit<RequestInit, "method" | "body">;
 }
 ```
+
+The contract owns the method and the body, so `method` and `body` are not accepted here — the body is a positional argument.
 
 ### `query`
 
@@ -125,13 +139,32 @@ Request headers, typed from the endpoint's `headers` schema (declare header name
 await client.secret({ headers: { "x-api-key": key } });
 ```
 
-### `request`
+When an endpoint declares **no** `headers` schema, the field is free-form instead — a record (numbers and booleans are coerced) or any `HeadersInit`:
 
-Additional `RequestInit` fields (abort signal, credentials, escape-hatch headers).
+```ts
+await client.listUsers({ headers: { authorization: `Bearer ${token}` } });
+await client.listUsers({ headers: new Headers({ "x-trace": id }) });
+```
+
+### Fetch options
+
+Common `RequestInit` fields are passed directly on the options object, so an abort signal doesn't need a wrapper:
 
 ```ts
 const controller = new AbortController();
-await client.listUsers({ request: { signal: controller.signal } });
+await client.listUsers({ signal: controller.signal });
+
+await client.listUsers({ query: { limit: 10 }, signal: controller.signal, credentials: "include" });
+```
+
+The flattened set is `signal`, `credentials`, `cache`, `mode`, `redirect`, `keepalive`, `integrity`, `referrer`, and `referrerPolicy` — deliberately the fields that exist in both the DOM and Node `RequestInit`, so the options type doesn't shift with your `lib` configuration.
+
+### `request`
+
+Escape hatch for `RequestInit` fields outside that set (`duplex`, `dispatcher`, …), and for setting `headers` as raw `HeadersInit` on an endpoint that declares a headers schema. Fields passed directly win over the same field set here.
+
+```ts
+await client.createUser(newUser, { request: { duplex: "half" } });
 ```
 
 ## Errors

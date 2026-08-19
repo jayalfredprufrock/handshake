@@ -14,10 +14,86 @@ type SchemaField<Key extends string, S> = S extends TSchema
     : { [K in Key]: InferSchema<S> }
   : {};
 
+/** Header overrides: a friendly record (numbers/booleans allowed) or a standard
+ * `HeadersInit` (a `Headers` instance or `[name, value]` pairs). */
+export type OverrideHeaders =
+  | Record<string, string | number | boolean | undefined>
+  | Headers
+  | [string, string][];
+
+/**
+ * The `headers` field of a client call: strict and schema-typed when the endpoint declares
+ * a `headers` schema (required only when the schema has a required property), free-form
+ * `HeadersInit` when it declares none.
+ */
+type HeadersField<S> = S extends TSchema
+  ? SchemaField<"headers", S>
+  : { headers?: OverrideHeaders };
+
+/**
+ * Fetch `RequestInit` fields accepted directly on a client call, so an abort signal is
+ * `{ signal }` rather than `{ request: { signal } }`. Deliberately a curated subset that
+ * exists in both the DOM and Node `RequestInit` — anything outside it (`duplex`,
+ * `dispatcher`, …) still goes through {@link ClientCallInit.request}.
+ */
+export interface ClientCallInit extends Pick<
+  RequestInit,
+  | "signal"
+  | "credentials"
+  | "cache"
+  | "mode"
+  | "redirect"
+  | "keepalive"
+  | "integrity"
+  | "referrer"
+  | "referrerPolicy"
+> {
+  /**
+   * Escape hatch for `RequestInit` fields not flattened above (and for `headers` as raw
+   * `HeadersInit` on an endpoint that declares a headers schema). Flattened fields win
+   * over the same field set here.
+   */
+  request?: ClientRequestInit;
+}
+
+/**
+ * Kept as a named interface in the intersection rather than folded into `Simplify`, so
+ * type errors and hovers still print `ClientOptions<…>` instead of expanding every
+ * `RequestInit` field.
+ */
 export type ClientOptions<E extends Endpoint> = Simplify<
-  SchemaField<"query", E["query"]> &
-    SchemaField<"headers", E["headers"]> & { request?: ClientRequestInit }
->;
+  SchemaField<"query", E["query"]> & HeadersField<E["headers"]>
+> &
+  ClientCallInit;
+
+/** The flattened {@link ClientCallInit} fields, for splitting them back out at runtime. */
+const CALL_INIT_KEYS = [
+  "signal",
+  "credentials",
+  "cache",
+  "mode",
+  "redirect",
+  "keepalive",
+  "integrity",
+  "referrer",
+  "referrerPolicy",
+] as const satisfies readonly (keyof ClientCallInit)[];
+
+/**
+ * Collects the fetch `RequestInit` a call's options contribute: the `request` escape hatch
+ * first, then the flattened fields over it. An explicit `undefined` doesn't clobber a value
+ * from `request`.
+ */
+const toRequestInit = (options: any): ClientRequestInit | undefined => {
+  if (!options) return undefined;
+  let init: Record<string, unknown> | undefined = options.request
+    ? { ...options.request }
+    : undefined;
+  for (const key of CALL_INIT_KEYS) {
+    if (options[key] !== undefined) (init ??= {})[key] = options[key];
+  }
+  return init as ClientRequestInit | undefined;
+};
 
 /** The trailing `options` arg, required only when `ClientOptions` has a required field. */
 type OptionsArgs<E extends Endpoint> =
@@ -68,13 +144,6 @@ export interface ResponseContext {
 export interface RetryContext extends ResponseContext {
   error: unknown;
 }
-
-/** Header overrides: a friendly record (numbers/booleans allowed) or a standard
- * `HeadersInit` (a `Headers` instance or `[name, value]` pairs). */
-export type OverrideHeaders =
-  | Record<string, string | number | boolean | undefined>
-  | Headers
-  | [string, string][];
 
 /**
  * Overrides `retry` may return to reshape the retried request — a fetch `RequestInit`
@@ -208,7 +277,7 @@ interface RequestSpec {
   method: string;
   body: unknown;
   init: ClientRequestInit | undefined;
-  headers: Record<string, string | number | boolean | undefined> | undefined;
+  headers: OverrideHeaders | undefined;
 }
 
 /** Applies headers onto `target`, accepting either a friendly record (numbers/booleans
@@ -232,7 +301,7 @@ function applyHeaders(target: Headers, source: OverrideHeaders | undefined): voi
 function buildRequestFromSpec(spec: RequestSpec, overrides?: RetryOverrides): Request {
   const { url, method, body, headers: overrideHeaders, ...initOverrides } = overrides ?? {};
 
-  // Headers low-to-high precedence: declared, then options.request, then retry overrides.
+  // Headers low-to-high precedence: the call's own, then options.request, then retry overrides.
   const headers = new Headers();
   applyHeaders(headers, spec.headers);
   applyHeaders(headers, spec.init?.headers);
@@ -345,7 +414,7 @@ export const createFetchClient = <A extends Api<any, any>>(
         url,
         method: endpoint.method,
         body,
-        init: options?.request,
+        init: toRequestInit(options),
         headers: options?.headers,
       });
     };

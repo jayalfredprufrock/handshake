@@ -218,6 +218,136 @@ describe("createFetchClient request/response pipeline", () => {
       void client.secret();
     });
   });
+
+  test("accepts free-form headers when the endpoint declares no headers schema", async () => {
+    let request: Request | undefined;
+    const fetch = vi.fn(async (req: Request | string | URL) => {
+      request = req as Request;
+      return json(200, { id: "1" });
+    });
+    const client = createFetchClient(getUserApi, { fetch, baseUrl: "https://x.com" });
+
+    await client.getUser({ id: "1" }, { headers: { authorization: "Bearer x", "x-n": 1 } });
+    expect(request!.headers.get("authorization")).toBe("Bearer x");
+    expect(request!.headers.get("x-n")).toBe("1");
+
+    await client.getUser({ id: "1" }, { headers: new Headers({ "x-h": "instance" }) });
+    expect(request!.headers.get("x-h")).toBe("instance");
+  });
+});
+
+describe("createFetchClient call options", () => {
+  const capture = () => {
+    let request: Request | undefined;
+    const fetch = vi.fn(async (req: Request | string | URL) => {
+      request = req as Request;
+      return json(200, { id: "1" });
+    });
+    return {
+      fetch,
+      get request() {
+        return request!;
+      },
+    };
+  };
+
+  test("takes RequestInit fields directly alongside query and headers", async () => {
+    const cap = capture();
+    const contract = createContract("/api", {
+      search: {
+        method: "GET",
+        path: "/search",
+        query: T.Object({ q: T.Optional(T.String()) }),
+        response: T.Object({ id: T.String() }),
+      },
+    });
+    const client = createFetchClient(apiOf(contract), {
+      fetch: cap.fetch,
+      baseUrl: "https://x.com",
+    });
+    const controller = new AbortController();
+
+    await client.search({
+      query: { q: "hi" },
+      headers: { "x-flat": "1" },
+      signal: controller.signal,
+      credentials: "include",
+      cache: "no-store",
+    });
+
+    expect(cap.request.url).toBe("https://x.com/api/search?q=hi");
+    expect(cap.request.headers.get("x-flat")).toBe("1");
+    expect(cap.request.credentials).toBe("include");
+    expect(cap.request.cache).toBe("no-store");
+    expect(cap.request.signal.aborted).toBe(false);
+    controller.abort();
+    expect(cap.request.signal.aborted).toBe(true);
+  });
+
+  test("aborts an in-flight call from a directly passed signal", async () => {
+    const controller = new AbortController();
+    const fetch = vi.fn((req: Request | string | URL) => {
+      const { signal } = req as Request;
+      return new Promise<Response>((_resolve, reject) => {
+        signal.addEventListener("abort", () => reject(new Error("aborted")));
+      });
+    });
+    const client = createFetchClient(getUserApi, { fetch, baseUrl: "https://x.com" });
+
+    const pending = client.getUser({ id: "1" }, { signal: controller.signal });
+    controller.abort();
+    await expect(pending).rejects.toThrow("aborted");
+  });
+
+  test("still supports the `request` escape hatch, with flat fields winning", async () => {
+    const cap = capture();
+    const client = createFetchClient(getUserApi, {
+      fetch: cap.fetch,
+      baseUrl: "https://x.com",
+    });
+
+    // `duplex` has no flattened equivalent; `cache` is set in both places.
+    await client.getUser(
+      { id: "1" },
+      { cache: "no-store", request: { cache: "force-cache", redirect: "error" } },
+    );
+    expect(cap.request.cache).toBe("no-store");
+    expect(cap.request.redirect).toBe("error");
+  });
+
+  test("`request.headers` overrides the call's own headers", async () => {
+    const cap = capture();
+    const client = createFetchClient(getUserApi, {
+      fetch: cap.fetch,
+      baseUrl: "https://x.com",
+    });
+
+    await client.getUser(
+      { id: "1" },
+      { headers: { "x-who": "flat" }, request: { headers: { "x-who": "escape-hatch" } } },
+    );
+    expect(cap.request.headers.get("x-who")).toBe("escape-hatch");
+  });
+
+  test("leaves the options arg optional and rejects non-init fields", () => {
+    const client = createFetchClient(getUserApi, {
+      fetch: okFetch({ id: "1" }),
+      baseUrl: "https://x.com",
+    });
+
+    void (() => {
+      void client.getUser({ id: "1" }); // no required field → options stays optional
+      void client.getUser({ id: "1" }, { signal: AbortSignal.timeout(10) });
+      // @ts-expect-error the contract owns the method
+      void client.getUser({ id: "1" }, { method: "PUT" });
+      // @ts-expect-error the body is a positional argument
+      void client.getUser({ id: "1" }, { body: "x" });
+      // @ts-expect-error typos are still caught
+      void client.getUser({ id: "1" }, { signl: AbortSignal.timeout(10) });
+      // @ts-expect-error non-portable init fields stay under `request`
+      void client.getUser({ id: "1" }, { duplex: "half" });
+    });
+  });
 });
 
 describe("createFetchClient hooks", () => {
