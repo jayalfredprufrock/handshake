@@ -1,6 +1,7 @@
 import { describe, expect, expectTypeOf, test } from "vite-plus/test";
 import * as T from "typebox";
 import { ApiError } from "./api-error";
+import { createApi } from "./create-api";
 import { createContract, makeErrorFactory } from "./create-contract";
 
 const errors = {
@@ -352,5 +353,49 @@ describe("framework error codes (always available)", () => {
         { errors: { VALIDATION_ERROR: { status: 400 } } },
       ),
     ).toThrow(/reserved/);
+  });
+});
+
+describe("client request defaults", () => {
+  const contract = createContract(
+    "/",
+    {
+      beacon: {
+        method: "POST",
+        path: "/events",
+        client: { keepalive: true },
+        response: T.Object({}),
+      },
+      plain: { method: "GET", path: "/plain", response: T.Object({}) },
+    },
+    { client: { cache: "no-store", redirect: "error" } },
+  );
+
+  test("a route's own client defaults win over the contract's", () => {
+    expect(contract.endpoints.beacon.client).toEqual({
+      cache: "no-store",
+      redirect: "error",
+      keepalive: true,
+    });
+    expectTypeOf(contract.endpoints.beacon.client.keepalive).toEqualTypeOf<true>();
+  });
+
+  test("a route without its own inherits the contract default as-is", () => {
+    expect(contract.endpoints.plain.client).toEqual({ cache: "no-store", redirect: "error" });
+  });
+
+  test("defaults merge api < contract < endpoint", () => {
+    const { endpoints } = createApi(
+      "/",
+      { main: contract },
+      { client: { redirect: "follow", mode: "cors" } },
+    );
+    expect(endpoints.beacon.client).toEqual({
+      mode: "cors",
+      cache: "no-store",
+      redirect: "error",
+      keepalive: true,
+    });
+    expect(endpoints.plain.client).toEqual({ mode: "cors", cache: "no-store", redirect: "error" });
   });
 });

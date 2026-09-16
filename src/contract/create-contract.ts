@@ -9,6 +9,36 @@ export interface EndpointMeta extends Record<string, any> {}
 
 export type MetaField<M> = {} extends M ? { meta?: M } : { meta: M };
 
+/**
+ * Fetch `RequestInit` defaults an endpoint (or a whole contract/api) can declare for the
+ * generated client. Deliberately the same curated field set a call site may pass, minus
+ * `signal` (inherently per-call) and `headers` (which have their own schema and precedence
+ * chain). Other adapters ignore this entirely.
+ */
+export interface ClientRequestDefaults extends Pick<
+  RequestInit,
+  | "credentials"
+  | "cache"
+  | "mode"
+  | "redirect"
+  | "keepalive"
+  | "integrity"
+  | "referrer"
+  | "referrerPolicy"
+> {}
+
+/** The keys of {@link ClientRequestDefaults}, for splitting them out at runtime. */
+export const REQUEST_DEFAULT_KEYS = [
+  "credentials",
+  "cache",
+  "mode",
+  "redirect",
+  "keepalive",
+  "integrity",
+  "referrer",
+  "referrerPolicy",
+] as const satisfies readonly (keyof ClientRequestDefaults)[];
+
 export type Endpoint = {
   method: "GET" | "POST" | "PATCH" | "DELETE";
   path: string;
@@ -27,6 +57,8 @@ export type Endpoint = {
    * document.
    */
   internal?: boolean;
+  /** Fetch `RequestInit` defaults for the generated client; a call site still wins. */
+  client?: ClientRequestDefaults;
 } & MetaField<EndpointMeta>;
 
 /** A single declared error: its HTTP status and an optional `details` schema. */
@@ -150,12 +182,15 @@ export interface ContractOptions<
   E extends ErrorMap | undefined = undefined,
   H extends TSchema | undefined = undefined,
   M extends EndpointMeta | undefined = undefined,
+  Cl extends ClientRequestDefaults | undefined = undefined,
 > {
   errors?: E;
   /** Header schema merged into every route's own `headers` (route headers take precedence). */
   headers?: H;
   /** Default meta merged into every route's own `meta` (route meta takes precedence). */
   meta?: M;
+  /** Client `RequestInit` defaults merged into every route's own (route keys win). */
+  client?: Cl;
 }
 
 /** Merges a contract-level header schema into a route's own header schema. */
@@ -217,6 +252,42 @@ export function applyContractMeta(
     Object.entries(endpoints).map(([name, endpoint]) => [
       name,
       { ...endpoint, meta: endpoint.meta ? { ...meta, ...endpoint.meta } : meta },
+    ]),
+  );
+}
+
+/** A route's own declared client defaults, or `undefined` when it declares none. */
+export type OwnClient<E> = E extends { client: infer O } ? O : undefined;
+
+/** Merges contract-level client defaults into a route's own (the route's keys win). */
+export type MergeClient<
+  Base extends ClientRequestDefaults,
+  Route,
+> = Route extends ClientRequestDefaults ? Omit<Base, keyof Route> & Route : Base;
+
+/** Composes contract-level client defaults into every endpoint's `client`. */
+export type WithContractClient<
+  C extends Record<string, any>,
+  Cl extends ClientRequestDefaults | undefined,
+> = Cl extends ClientRequestDefaults
+  ? {
+      // `Endpoint &` keeps the mapped result assignable to `Record<string, Endpoint>`;
+      // `Omit` over a generic is deferred, so TS can't otherwise see `method`/`path`/`response`.
+      [K in keyof C]: Endpoint &
+        Omit<C[K], "client"> & { client: MergeClient<Cl, OwnClient<C[K]>> };
+    }
+  : C;
+
+/** Merges default client `RequestInit` fields into each endpoint's own (the endpoint's win). */
+export function applyContractClient(
+  endpoints: Record<string, Endpoint>,
+  client: ClientRequestDefaults | undefined,
+): Record<string, Endpoint> {
+  if (!client) return endpoints;
+  return Object.fromEntries(
+    Object.entries(endpoints).map(([name, endpoint]) => [
+      name,
+      { ...endpoint, client: endpoint.client ? { ...client, ...endpoint.client } : client },
     ]),
   );
 }
@@ -310,28 +381,41 @@ export function createContract<
   E extends ErrorMap | undefined = undefined,
   H extends TSchema | undefined = undefined,
   const M extends EndpointMeta | undefined = undefined,
+  const Cl extends ClientRequestDefaults | undefined = undefined,
 >(
   basePath: string,
   endpoints: ExactEndpoints<C>,
-  options: ContractOptions<E, H, M>,
-): Contract<WithContractMeta<WithContractHeaders<C, H>, M>, ContractEntries<E>>;
+  options: ContractOptions<E, H, M, Cl>,
+): Contract<
+  WithContractClient<WithContractMeta<WithContractHeaders<C, H>, M>, Cl>,
+  ContractEntries<E>
+>;
 export function createContract(
   basePathOrEndpoints: string | Record<string, Endpoint>,
-  endpointsOrOptions?: Record<string, Endpoint> | ContractOptions<any, any, any>,
-  maybeOptions?: ContractOptions<any, any, any>,
+  endpointsOrOptions?: Record<string, Endpoint> | ContractOptions<any, any, any, any>,
+  maybeOptions?: ContractOptions<any, any, any, any>,
 ): any {
   if (typeof basePathOrEndpoints === "string") {
     const endpoints = endpointsOrOptions as Record<string, Endpoint>;
     return buildContract(
       basePathOrEndpoints,
-      applyContractMeta(applyContractHeaders(endpoints, maybeOptions?.headers), maybeOptions?.meta),
+      applyContractClient(
+        applyContractMeta(
+          applyContractHeaders(endpoints, maybeOptions?.headers),
+          maybeOptions?.meta,
+        ),
+        maybeOptions?.client,
+      ),
       maybeOptions?.errors,
     );
   }
-  const options = endpointsOrOptions as ContractOptions<any, any, any> | undefined;
+  const options = endpointsOrOptions as ContractOptions<any, any, any, any> | undefined;
   return buildContract(
     "/",
-    applyContractMeta(applyContractHeaders(basePathOrEndpoints, options?.headers), options?.meta),
+    applyContractClient(
+      applyContractMeta(applyContractHeaders(basePathOrEndpoints, options?.headers), options?.meta),
+      options?.client,
+    ),
     options?.errors,
   );
 }

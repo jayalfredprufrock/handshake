@@ -1,5 +1,6 @@
 import type { TSchema } from "typebox";
 import type {
+  ClientRequestDefaults,
   Contract,
   ContractBody,
   ContractParams,
@@ -14,10 +15,12 @@ import type {
   ErrorGuard,
   ErrorMap,
   HasEndpoints,
+  WithContractClient,
   WithContractHeaders,
   WithContractMeta,
 } from "./create-contract";
 import {
+  applyContractClient,
   applyContractHeaders,
   applyContractMeta,
   makeErrorFactory,
@@ -57,6 +60,7 @@ export interface ApiOptions<
   E extends ErrorMap | undefined = undefined,
   H extends TSchema | undefined = undefined,
   M extends EndpointMeta | undefined = undefined,
+  Cl extends ClientRequestDefaults | undefined = undefined,
 > {
   /** Errors recognized across the whole api (merged with each contract's own). */
   errors?: E;
@@ -64,6 +68,8 @@ export interface ApiOptions<
   headers?: H;
   /** Default meta merged into every route's `meta` (route meta wins). */
   meta?: M;
+  /** Client `RequestInit` defaults merged into every route's own (route keys win). */
+  client?: Cl;
 }
 
 /**
@@ -76,9 +82,13 @@ type EnrichGroups<
   G extends Record<string, Contract<any, any>>,
   H extends TSchema | undefined,
   M extends EndpointMeta | undefined,
+  Cl extends ClientRequestDefaults | undefined,
 > = {
   [K in keyof G]: Omit<G[K], "endpoints"> & {
-    endpoints: WithContractHeaders<WithContractMeta<G[K]["endpoints"], M>, H>;
+    endpoints: WithContractClient<
+      WithContractHeaders<WithContractMeta<G[K]["endpoints"], M>, H>,
+      Cl
+    >;
   };
 };
 
@@ -129,19 +139,20 @@ export function createApi<
   E extends ErrorMap | undefined = undefined,
   H extends TSchema | undefined = undefined,
   const M extends EndpointMeta | undefined = undefined,
+  const Cl extends ClientRequestDefaults | undefined = undefined,
 >(
   basePath: string,
   contracts: G,
-  options: ApiOptions<E, H, M>,
-): Api<EnrichGroups<G, H, M>, ApiEntry<G> | EntriesOf<E>>;
+  options: ApiOptions<E, H, M, Cl>,
+): Api<EnrichGroups<G, H, M, Cl>, ApiEntry<G> | EntriesOf<E>>;
 export function createApi(
   basePathOrContracts: string | Record<string, Contract<any, any>>,
-  contractsOrOptions?: Record<string, Contract<any, any>> | ApiOptions<any, any, any>,
-  maybeOptions?: ApiOptions<any, any, any>,
+  contractsOrOptions?: Record<string, Contract<any, any>> | ApiOptions<any, any, any, any>,
+  maybeOptions?: ApiOptions<any, any, any, any>,
 ): Api<any, any> {
   let basePath: string;
   let contracts: Record<string, Contract<any, any>>;
-  let options: ApiOptions<any, any, any> | undefined;
+  let options: ApiOptions<any, any, any, any> | undefined;
   if (typeof basePathOrContracts === "string") {
     basePath = basePathOrContracts;
     contracts = contractsOrOptions as Record<string, Contract<any, any>>;
@@ -149,16 +160,19 @@ export function createApi(
   } else {
     basePath = "/";
     contracts = basePathOrContracts;
-    options = contractsOrOptions as ApiOptions<any, any, any> | undefined;
+    options = contractsOrOptions as ApiOptions<any, any, any, any> | undefined;
   }
 
   const enrichedGroups: Record<string, Contract<any, any>> = {};
   const flat: Record<string, Endpoint> = {};
 
   for (const [groupName, group] of Object.entries(contracts)) {
-    const enriched = applyContractHeaders(
-      applyContractMeta(group.endpoints as Record<string, Endpoint>, options?.meta),
-      options?.headers,
+    const enriched = applyContractClient(
+      applyContractHeaders(
+        applyContractMeta(group.endpoints as Record<string, Endpoint>, options?.meta),
+        options?.headers,
+      ),
+      options?.client,
     );
     // Keep the group's own basePath/errors; adapters mount named groups at
     // joinPath(api.basePath, group.basePath) using these relative endpoint paths.

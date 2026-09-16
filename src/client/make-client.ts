@@ -1,6 +1,6 @@
 import type { TSchema } from "typebox";
-import type { Api, Endpoint, InferSchema } from "../contract";
-import { ApiError, isErrorEnvelope } from "../contract";
+import type { Api, ClientRequestDefaults, Endpoint, InferSchema } from "../contract";
+import { ApiError, isErrorEnvelope, REQUEST_DEFAULT_KEYS } from "../contract";
 import { HttpError } from "./http-error";
 
 type ClientRequestInit = Omit<RequestInit, "method" | "body">;
@@ -36,18 +36,9 @@ type HeadersField<S> = S extends TSchema
  * exists in both the DOM and Node `RequestInit` — anything outside it (`duplex`,
  * `dispatcher`, …) still goes through {@link ClientCallInit.request}.
  */
-export interface ClientCallInit extends Pick<
-  RequestInit,
-  | "signal"
-  | "credentials"
-  | "cache"
-  | "mode"
-  | "redirect"
-  | "keepalive"
-  | "integrity"
-  | "referrer"
-  | "referrerPolicy"
-> {
+export interface ClientCallInit extends ClientRequestDefaults {
+  /** Aborts the request. Per-call only, so it has no contract-level counterpart. */
+  signal?: RequestInit["signal"];
   /**
    * Escape hatch for `RequestInit` fields not flattened above (and for `headers` as raw
    * `HeadersInit` on an endpoint that declares a headers schema). Flattened fields win
@@ -68,29 +59,37 @@ export type ClientOptions<E extends Endpoint> = Simplify<
 
 /** The flattened {@link ClientCallInit} fields, for splitting them back out at runtime. */
 const CALL_INIT_KEYS = [
+  ...REQUEST_DEFAULT_KEYS,
   "signal",
-  "credentials",
-  "cache",
-  "mode",
-  "redirect",
-  "keepalive",
-  "integrity",
-  "referrer",
-  "referrerPolicy",
 ] as const satisfies readonly (keyof ClientCallInit)[];
 
+/** Copies the defined keys of `source` onto `target`, so an explicit `undefined` never clobbers. */
+const assignDefined = (
+  target: Record<string, unknown> | undefined,
+  source: Record<string, unknown> | undefined,
+): Record<string, unknown> | undefined => {
+  if (!source) return target;
+  for (const [key, value] of Object.entries(source)) {
+    if (value !== undefined) (target ??= {})[key] = value;
+  }
+  return target;
+};
+
 /**
- * Collects the fetch `RequestInit` a call's options contribute: the `request` escape hatch
- * first, then the flattened fields over it. An explicit `undefined` doesn't clobber a value
- * from `request`.
+ * Collects the fetch `RequestInit` for a call, lowest precedence first: the endpoint's
+ * contract-declared defaults, then the `request` escape hatch, then the flattened call
+ * fields. An explicit `undefined` at any layer doesn't clobber the layer beneath it.
  */
-const toRequestInit = (options: any): ClientRequestInit | undefined => {
-  if (!options) return undefined;
-  let init: Record<string, unknown> | undefined = options.request
-    ? { ...options.request }
-    : undefined;
-  for (const key of CALL_INIT_KEYS) {
-    if (options[key] !== undefined) (init ??= {})[key] = options[key];
+const toRequestInit = (
+  options: any,
+  defaults: ClientRequestDefaults | undefined,
+): ClientRequestInit | undefined => {
+  let init = assignDefined(undefined, defaults as Record<string, unknown> | undefined);
+  init = assignDefined(init, options?.request);
+  if (options) {
+    for (const key of CALL_INIT_KEYS) {
+      if (options[key] !== undefined) (init ??= {})[key] = options[key];
+    }
   }
   return init as ClientRequestInit | undefined;
 };
@@ -414,7 +413,7 @@ export const createFetchClient = <A extends Api<any, any>>(
         url,
         method: endpoint.method,
         body,
-        init: toRequestInit(options),
+        init: toRequestInit(options, endpoint.client),
         headers: options?.headers,
       });
     };

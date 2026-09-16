@@ -580,3 +580,95 @@ describe("client typing", () => {
     expectTypeOf(client).not.toHaveProperty("purgeCats");
   });
 });
+
+describe("contract-declared request defaults", () => {
+  const capture = () => {
+    let request: Request | undefined;
+    const fetch = vi.fn(async (req: Request | string | URL) => {
+      request = req as Request;
+      return json(200, {});
+    });
+    return {
+      fetch,
+      get request() {
+        return request!;
+      },
+    };
+  };
+
+  const beaconApi = (client: Record<string, unknown> = { keepalive: true, cache: "no-store" }) =>
+    apiOf(
+      createContract("/", {
+        recordEvent: {
+          method: "POST",
+          path: "/events",
+          body: T.Object({ name: T.String() }),
+          client,
+          response: T.Object({}),
+        },
+      }),
+    );
+
+  test("an endpoint's client defaults reach the request", async () => {
+    const cap = capture();
+    const client = createFetchClient(beaconApi(), { baseUrl: "http://x", fetch: cap.fetch });
+    await client.recordEvent({ name: "click" });
+    expect(cap.request.keepalive).toBe(true);
+    expect(cap.request.cache).toBe("no-store");
+  });
+
+  test("an endpoint with no client defaults is left on the fetch defaults", async () => {
+    const cap = capture();
+    const api = apiOf(
+      createContract("/", {
+        listUsers: { method: "GET", path: "/users", response: T.Object({}) },
+      }),
+    );
+    const client = createFetchClient(api, { baseUrl: "http://x", fetch: cap.fetch });
+    await client.listUsers();
+    expect(cap.request.credentials).toBe("same-origin");
+    expect(cap.request.cache).toBe("default");
+  });
+
+  test("options.request wins over the contract", async () => {
+    const cap = capture();
+    const api = beaconApi({ credentials: "omit" });
+    const client = createFetchClient(api, { baseUrl: "http://x", fetch: cap.fetch });
+    await client.recordEvent({ name: "click" }, { request: { credentials: "include" } });
+    expect(cap.request.credentials).toBe("include");
+  });
+
+  test("a flattened call field wins over both the contract and options.request", async () => {
+    const cap = capture();
+    const api = beaconApi({ credentials: "omit" });
+    const client = createFetchClient(api, { baseUrl: "http://x", fetch: cap.fetch });
+    await client.recordEvent(
+      { name: "click" },
+      { request: { credentials: "include" }, credentials: "same-origin" },
+    );
+    expect(cap.request.credentials).toBe("same-origin");
+  });
+
+  test("an explicit undefined at the call site doesn't clobber the contract default", async () => {
+    const cap = capture();
+    const api = beaconApi({ credentials: "include" });
+    const client = createFetchClient(api, { baseUrl: "http://x", fetch: cap.fetch });
+    await client.recordEvent({ name: "click" }, { credentials: undefined });
+    expect(cap.request.credentials).toBe("include");
+  });
+
+  test("a retry override still wins over the contract default", async () => {
+    const seen: string[] = [];
+    const fetch = vi.fn(async (req: Request | string | URL) => {
+      seen.push((req as Request).credentials);
+      return json(500, {});
+    });
+    const client = createFetchClient(beaconApi({ credentials: "omit" }), {
+      baseUrl: "http://x",
+      fetch,
+      retry: (ctx) => (ctx.attempt < 2 ? { credentials: "include" } : false),
+    });
+    await expect(client.recordEvent({ name: "click" })).rejects.toBeInstanceOf(HttpError);
+    expect(seen).toEqual(["omit", "include"]);
+  });
+});

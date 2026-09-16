@@ -159,6 +159,36 @@ await client.listUsers({ query: { limit: 10 }, signal: controller.signal, creden
 
 The flattened set is `signal`, `credentials`, `cache`, `mode`, `redirect`, `keepalive`, `integrity`, `referrer`, and `referrerPolicy` — deliberately the fields that exist in both the DOM and Node `RequestInit`, so the options type doesn't shift with your `lib` configuration.
 
+### Credentials
+
+An endpoint that authenticates with a cookie needs `credentials: "include"` for the browser to attach it cross-origin. Rather than repeat that at every call site, declare it once in the contract via [`client`](/handshake/core/contracts/#client):
+
+```ts
+// contract
+refresh: { method: "POST", path: "/refresh", client: { credentials: "include" }, ... }
+
+// every call sends the cookie, with no call-site ceremony
+await client.refresh();
+```
+
+Contract-level and api-level `client` defaults work the same way, so a whole group can opt in at once — and an individual route can still override the inherited value, including opting out with `credentials: "omit"`.
+
+### Contract-declared defaults
+
+The same applies to every other flattened fetch field — `cache`, `mode`, `redirect`, `keepalive`, `integrity`, `referrer`, `referrerPolicy`:
+
+```ts
+// contract
+recordEvent: { method: "POST", path: "/events", body: EventInput, client: { keepalive: true }, ... }
+
+// every call is keepalive
+await client.recordEvent({ name: "click" });
+```
+
+`signal` is deliberately not available there — it is inherently per-call.
+
+Precedence, lowest first: the endpoint's `client` defaults, then `request`, then a flattened call field. An explicit `undefined` at any layer doesn't clobber the layer beneath it, and `handleRequest` and a `retry` override still run afterward and win over all of them.
+
 ### `request`
 
 Escape hatch for `RequestInit` fields outside that set (`duplex`, `dispatcher`, …), and for setting `headers` as raw `HeadersInit` on an endpoint that declares a headers schema. Fields passed directly win over the same field set here.
