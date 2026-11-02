@@ -5,8 +5,6 @@ import { HttpError } from "./http-error";
 
 type ClientRequestInit = Omit<RequestInit, "method" | "body">;
 
-type Simplify<T> = { [K in keyof T]: T[K] } & {};
-
 /** A `{ key: value }` field that's required only when its schema has a required property. */
 type SchemaField<Key extends string, S> = S extends TSchema
   ? {} extends InferSchema<S>
@@ -47,15 +45,21 @@ export interface ClientCallInit extends ClientRequestDefaults {
   request?: ClientRequestInit;
 }
 
-/**
- * Kept as a named interface in the intersection rather than folded into `Simplify`, so
- * type errors and hovers still print `ClientOptions<…>` instead of expanding every
- * `RequestInit` field.
- */
-export type ClientOptions<E extends Endpoint> = Simplify<
-  SchemaField<"query", E["query"]> & HeadersField<E["headers"]>
-> &
+type ClientOptionsFields<E extends Endpoint> = SchemaField<"query", E["query"]> &
+  HeadersField<E["headers"]> &
   ClientCallInit;
+
+/**
+ * A mapped type rather than an intersection, so it can carry a variance annotation (`in out`,
+ * which is what TypeScript measures anyway). Without one, TypeScript measures `E`'s variance the first time two `ClientOptions` are
+ * related. That reaches through `InferSchema` into TypeBox's `StaticType`, whose own variance
+ * costs ~1M instantiations per program (typebox >= 1.3). Anything that infers a client
+ * method's parameters triggers it, e.g. mobx-toolbox delegating a model's `get` to a store.
+ * Type errors still print `ClientOptions<…>`.
+ */
+export type ClientOptions<in out E extends Endpoint> = {
+  [K in keyof ClientOptionsFields<E>]: ClientOptionsFields<E>[K];
+};
 
 /** The flattened {@link ClientCallInit} fields, for splitting them back out at runtime. */
 const CALL_INIT_KEYS = [
