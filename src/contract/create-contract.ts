@@ -165,7 +165,7 @@ export type ErrorGuard<Entry extends ErrorEntry = never> =
  */
 export interface Contract<
   C extends Record<string, Endpoint> = Record<string, Endpoint>,
-  Entry extends ErrorEntry = never,
+  Entry extends ErrorEntry = FrameworkEntries,
 > {
   basePath: string;
   endpoints: C;
@@ -199,16 +199,55 @@ export type MergeHeaders<
   Route extends TSchema | undefined,
 > = Base extends TSchema ? (Route extends TSchema ? TComposite<Base, Route> : Base) : Route;
 
+/** A route's own declared `headers` schema, or `undefined` when it declares none. */
+type OwnHeaders<E> = E extends { headers: infer O extends TSchema } ? O : undefined;
+
+/**
+ * Narrows a computed endpoint map to `Record<string, Endpoint>` without changing it:
+ * resolves to `C` itself once instantiated, but lets TS see the bound while generic.
+ */
+export type AsEndpoints<C> = C extends Record<string, Endpoint> ? C : never;
+
+/** The endpoint fields an enrichment pass overrides, given which defaults are set. */
+type EnrichedKey<H, M, Cl> =
+  | (H extends TSchema ? "headers" : never)
+  | (M extends EndpointMeta ? "meta" : never)
+  | (Cl extends ClientRequestDefaults ? "client" : never);
+
+/**
+ * One endpoint with default `headers`/`meta`/`client` merged in, as a single flat
+ * object: untouched fields are copied through (modifiers preserved) and each
+ * overridden field is recomputed once. Kept flat — rather than layering `Omit`s per
+ * concern — so declaration emit prints each endpoint once instead of once per layer.
+ */
+export type EnrichEndpoint<E, H, M, Cl> = {
+  [P in keyof E as P extends EnrichedKey<H, M, Cl> ? never : P]: E[P];
+} & {
+  // Narrowed via conditionals, not `&`: `M & EndpointMeta` would drag in the index
+  // signature and make `MergeMeta`'s `Omit` drop every default key.
+  [P in EnrichedKey<H, M, Cl>]: P extends "headers"
+    ? H extends TSchema
+      ? MergeHeaders<H, OwnHeaders<E>>
+      : never
+    : P extends "meta"
+      ? M extends EndpointMeta
+        ? MergeMeta<M, OwnMeta<E>>
+        : never
+      : Cl extends ClientRequestDefaults
+        ? MergeClient<Cl, OwnClient<E>>
+        : never;
+};
+
+/** Merges default `headers`/`meta`/`client` into every endpoint of a map in one pass. */
+export type EnrichEndpoints<C, H, M, Cl> = [EnrichedKey<H, M, Cl>] extends [never]
+  ? C
+  : AsEndpoints<{ [K in keyof C]: EnrichEndpoint<C[K], H, M, Cl> }>;
+
 /** Composes contract-level headers into every endpoint's `headers`. */
 export type WithContractHeaders<
   C extends Record<string, any>,
   H extends TSchema | undefined,
-> = H extends TSchema
-  ? {
-      [K in keyof C]: Endpoint &
-        Omit<C[K], "headers"> & { headers: MergeHeaders<H, C[K]["headers"]> };
-    }
-  : C;
+> = EnrichEndpoints<C, H, undefined, undefined>;
 
 /** Composes contract-level headers into each endpoint at build time. */
 export function applyContractHeaders(
@@ -236,11 +275,7 @@ export type MergeMeta<Base extends EndpointMeta, Route> = Route extends Endpoint
 export type WithContractMeta<
   C extends Record<string, any>,
   M extends EndpointMeta | undefined,
-> = M extends EndpointMeta
-  ? {
-      [K in keyof C]: Omit<C[K], "meta"> & { meta: MergeMeta<M, OwnMeta<C[K]>> };
-    }
-  : C;
+> = EnrichEndpoints<C, undefined, M, undefined>;
 
 /** Composes a contract-level default meta into each endpoint at build time. */
 export function applyContractMeta(
@@ -269,14 +304,7 @@ export type MergeClient<
 export type WithContractClient<
   C extends Record<string, any>,
   Cl extends ClientRequestDefaults | undefined,
-> = Cl extends ClientRequestDefaults
-  ? {
-      // `Endpoint &` keeps the mapped result assignable to `Record<string, Endpoint>`;
-      // `Omit` over a generic is deferred, so TS can't otherwise see `method`/`path`/`response`.
-      [K in keyof C]: Endpoint &
-        Omit<C[K], "client"> & { client: MergeClient<Cl, OwnClient<C[K]>> };
-    }
-  : C;
+> = EnrichEndpoints<C, undefined, undefined, Cl>;
 
 /** Merges default client `RequestInit` fields into each endpoint's own (the endpoint's win). */
 export function applyContractClient(
@@ -386,10 +414,7 @@ export function createContract<
   basePath: string,
   endpoints: ExactEndpoints<C>,
   options: ContractOptions<E, H, M, Cl>,
-): Contract<
-  WithContractClient<WithContractMeta<WithContractHeaders<C, H>, M>, Cl>,
-  ContractEntries<E>
->;
+): Contract<EnrichEndpoints<C, H, M, Cl>, ContractEntries<E>>;
 export function createContract(
   basePathOrEndpoints: string | Record<string, Endpoint>,
   endpointsOrOptions?: Record<string, Endpoint> | ContractOptions<any, any, any, any>,

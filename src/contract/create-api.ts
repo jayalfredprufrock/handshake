@@ -1,5 +1,6 @@
 import type { TSchema } from "typebox";
 import type {
+  AsEndpoints,
   ClientRequestDefaults,
   Contract,
   ContractBody,
@@ -9,15 +10,14 @@ import type {
   ContractSchema,
   Endpoint,
   EndpointMeta,
+  EnrichEndpoints,
   EntriesOf,
   ErrorEntry,
   ErrorFactory,
   ErrorGuard,
   ErrorMap,
+  FrameworkEntries,
   HasEndpoints,
-  WithContractClient,
-  WithContractHeaders,
-  WithContractMeta,
 } from "./create-contract";
 import {
   applyContractClient,
@@ -26,10 +26,6 @@ import {
   makeErrorFactory,
   makeIsError,
 } from "./create-contract";
-
-type UnionToIntersection<U> = (U extends any ? (x: U) => void : never) extends (x: infer I) => void
-  ? I
-  : never;
 
 /** Joins a base path and a route path into a single normalized path. */
 export function joinPath(base: string, path: string): string {
@@ -72,11 +68,13 @@ export interface ApiOptions<
   client?: Cl;
 }
 
+/** The error-entry union a contract carries in its phantom `__entry` field. */
+type EntryOf<C> = C extends { readonly __entry?: infer Entry extends ErrorEntry } ? Entry : never;
+
 /**
- * Each group with its endpoints enriched by the api-level headers/meta. Structural
- * (not re-wrapped in `Contract<…>`) so the enriched endpoint map isn't checked
- * against `Contract`'s `Record<string, Endpoint>` bound at definition time. Meta is
- * merged first, then headers, so the merged meta keys survive.
+ * Each group with its endpoints enriched by the api-level headers/meta/client,
+ * re-wrapped as a plain `Contract` so declaration emit prints only the enriched
+ * endpoints (not the original map alongside them).
  */
 type EnrichGroups<
   G extends Record<string, Contract<any, any>>,
@@ -84,26 +82,55 @@ type EnrichGroups<
   M extends EndpointMeta | undefined,
   Cl extends ClientRequestDefaults | undefined,
 > = {
-  [K in keyof G]: Omit<G[K], "endpoints"> & {
-    endpoints: WithContractClient<
-      WithContractHeaders<WithContractMeta<G[K]["endpoints"], M>, H>,
-      Cl
-    >;
-  };
+  [K in keyof G]: Contract<EnrichEndpoints<G[K]["endpoints"], H, M, Cl>, EntryOf<G[K]>>;
 };
 
-/** The flat union of every group's endpoints (names are unique — enforced at runtime). */
-export type MergeGroupEndpoints<G extends Record<string, Contract<any, any>>> =
-  UnionToIntersection<{ [K in keyof G]: G[K]["endpoints"] }[keyof G]> extends infer M
-    ? M extends Record<string, Endpoint>
-      ? M
-      : never
-    : never;
+/**
+ * An endpoint as it appears in the flat {@link Api.endpoints} view. Its `path` there
+ * is prefixed with the group's base path at runtime; contract base paths aren't
+ * tracked as literals, so the path widens to `string` rather than keep a wrong literal.
+ */
+type FlatEndpoint<E> = { [P in keyof E]: P extends "path" ? string : E[P] };
 
-/** The union of every group's declared error entries. */
-export type ApiEntry<G extends Record<string, Contract<any, any>>> = {
-  [K in keyof G]: NonNullable<G[K]["__entry"]>;
+/** Every `[name, endpoint]` pair across the groups, as a union (linear in endpoints). */
+type EndpointEntry<G extends Record<string, Contract<any, any>>> = {
+  [K in keyof G]: {
+    [N in keyof G[K]["endpoints"]]: [N, FlatEndpoint<G[K]["endpoints"][N]>];
+  }[keyof G[K]["endpoints"]];
 }[keyof G];
+
+/** The flat map of every group's endpoints (names are unique — enforced by {@link UniqueEndpoints}). */
+export type MergeGroupEndpoints<G extends Record<string, Contract<any, any>>> = AsEndpoints<{
+  [Entry in EndpointEntry<G> as Entry[0]]: Entry[1];
+}>;
+
+/** Endpoint names declared by more than one group. */
+type DuplicateEndpointNames<G extends Record<string, Contract<any, any>>> = {
+  [K in keyof G]: keyof G[K]["endpoints"] &
+    { [J in Exclude<keyof G, K>]: keyof G[J]["endpoints"] }[Exclude<keyof G, K>];
+}[keyof G];
+
+/**
+ * Rejects groups whose endpoint names collide (the runtime would throw): each
+ * duplicated name must also satisfy an error-message string, which no endpoint can.
+ */
+type UniqueEndpoints<G extends Record<string, Contract<any, any>>> = [
+  DuplicateEndpointNames<G>,
+] extends [never]
+  ? unknown
+  : {
+      [K in keyof G]: {
+        endpoints: {
+          [N in DuplicateEndpointNames<G> &
+            keyof G[K]["endpoints"]]: "Duplicate endpoint name across the api's contracts";
+        };
+      };
+    };
+
+/** The union of every group's declared error entries, plus the always-available framework ones. */
+export type ApiEntry<G extends Record<string, Contract<any, any>>> =
+  | FrameworkEntries
+  | EntryOf<G[keyof G]>;
 
 /**
  * A composed API: a named record of {@link Contract} groups plus cross-cutting
@@ -112,7 +139,7 @@ export type ApiEntry<G extends Record<string, Contract<any, any>>> = {
  */
 export interface Api<
   G extends Record<string, Contract<any, any>> = Record<string, Contract<any, any>>,
-  Entry extends ErrorEntry = never,
+  Entry extends ErrorEntry = FrameworkEntries,
 > {
   basePath: string;
   /** The named groups, each enriched with the api's headers/meta/errors. */
@@ -127,13 +154,15 @@ export interface Api<
   readonly __entry?: Entry;
 }
 
+// Return types spell out the entry union inline (rather than `ApiEntry<G>`) so
+// declaration emit prints the resolved union instead of re-serializing all of `G`.
 export function createApi<const G extends Record<string, Contract<any, any>>>(
-  contracts: G,
-): Api<G, ApiEntry<G>>;
+  contracts: G & UniqueEndpoints<G>,
+): Api<G, FrameworkEntries | EntryOf<G[keyof G]>>;
 export function createApi<const G extends Record<string, Contract<any, any>>>(
   basePath: string,
-  contracts: G,
-): Api<G, ApiEntry<G>>;
+  contracts: G & UniqueEndpoints<G>,
+): Api<G, FrameworkEntries | EntryOf<G[keyof G]>>;
 export function createApi<
   const G extends Record<string, Contract<any, any>>,
   E extends ErrorMap | undefined = undefined,
@@ -142,9 +171,9 @@ export function createApi<
   const Cl extends ClientRequestDefaults | undefined = undefined,
 >(
   basePath: string,
-  contracts: G,
+  contracts: G & UniqueEndpoints<G>,
   options: ApiOptions<E, H, M, Cl>,
-): Api<EnrichGroups<G, H, M, Cl>, ApiEntry<G> | EntriesOf<E>>;
+): Api<EnrichGroups<G, H, M, Cl>, FrameworkEntries | EntryOf<G[keyof G]> | EntriesOf<E>>;
 export function createApi(
   basePathOrContracts: string | Record<string, Contract<any, any>>,
   contractsOrOptions?: Record<string, Contract<any, any>> | ApiOptions<any, any, any, any>,
