@@ -7,7 +7,7 @@ import type { TopKeyOf } from "../typebox";
 import { createApi } from "./create-api";
 import type { Api, ApiBody, ApiHeaders, ApiSchema } from "./create-api";
 import { createContract } from "./create-contract";
-import type { Contract, InferSchema } from "./create-contract";
+import type { Contract, Endpoint, InferSchema } from "./create-contract";
 
 const User = T.Object({ id: T.String() });
 
@@ -42,6 +42,19 @@ describe("createApi", () => {
     expectTypeOf(api).toExtend<Api<any, any>>();
     // Framework codes are always available, even with no declared errors.
     expect(api.error("UNKNOWN_ERROR", "boom").status).toBe(500);
+  });
+
+  test("concrete apis are assignable to the loose bounds adapters accept", () => {
+    const users = createContract("/users", {
+      getUser: { method: "GET", path: "/:id", params: User, response: User },
+    });
+    const api = createApi({ users });
+    // Plain assignments: a `never` endpoint map on the loose side would reject these.
+    const loose: Api<any, any> = api;
+    const bare: Api = api;
+    expect([loose, bare]).toHaveLength(2);
+    expectTypeOf<Api<any, any>["endpoints"]>().toEqualTypeOf<Record<string, Endpoint>>();
+    expectTypeOf<Api["endpoints"]>().toEqualTypeOf<Record<string, Endpoint>>();
   });
 
   test("an api with no groups is still a valid Api", () => {

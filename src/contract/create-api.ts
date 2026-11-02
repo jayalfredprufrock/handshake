@@ -101,9 +101,13 @@ type EndpointEntry<G extends Record<string, Contract<any, any>>> = {
 }[keyof G];
 
 /** The flat map of every group's endpoints (names are unique — enforced by {@link UniqueEndpoints}). */
-export type MergeGroupEndpoints<G extends Record<string, Contract<any, any>>> = AsEndpoints<{
-  [Entry in EndpointEntry<G> as Entry[0]]: Entry[1];
-}>;
+export type MergeGroupEndpoints<G extends Record<string, Contract<any, any>>> =
+  string extends keyof G
+    ? // Wide group maps (`Api<any, any>`, the bare `Api` default — the loose bounds the
+      // adapters accept) stay a plain endpoint record; mapping their entries would
+      // otherwise collapse to `never`.
+      Record<string, Endpoint>
+    : AsEndpoints<{ [Entry in EndpointEntry<G> as Entry[0]]: Entry[1] }>;
 
 /** Endpoint names declared by more than one group. */
 type DuplicateEndpointNames<G extends Record<string, Contract<any, any>>> = {
