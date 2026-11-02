@@ -1,10 +1,13 @@
 import { describe, expect, expectTypeOf, test } from "vite-plus/test";
 import * as T from "typebox";
 import type { Static } from "typebox";
+import type { StaticApi, StaticEndpoint } from "../client";
+import type { BaseHandlerInput } from "../server";
+import type { TopKeyOf } from "../typebox";
 import { createApi } from "./create-api";
-import type { Api } from "./create-api";
+import type { Api, ApiBody, ApiHeaders, ApiSchema } from "./create-api";
 import { createContract } from "./create-contract";
-import type { Contract } from "./create-contract";
+import type { Contract, InferSchema } from "./create-contract";
 
 const User = T.Object({ id: T.String() });
 
@@ -94,5 +97,56 @@ describe("createApi", () => {
     expect(api.error("NOT_FOUND", "nope").status).toBe(404);
     // @ts-expect-error "NOPE" is not a declared error code
     expect(() => api.error("NOPE", "x")).toThrow();
+  });
+});
+
+describe("type helpers", () => {
+  const users = createContract("/users", {
+    getUser: {
+      method: "GET",
+      path: "/:id",
+      params: User,
+      headers: T.Object({ "x-a": T.String() }),
+      response: User,
+    },
+    createUser: { method: "POST", path: "/", body: User, response: User },
+  });
+  const api = createApi({ users });
+  type Endpoints = typeof api.endpoints;
+
+  test("an undeclared schema field is undefined, not any", () => {
+    expectTypeOf<ApiBody<typeof api>["getUser"]>().toEqualTypeOf<undefined>();
+    expectTypeOf<ApiBody<typeof api>["createUser"]>().toEqualTypeOf<{ id: string }>();
+    expectTypeOf<StaticEndpoint<Endpoints["getUser"]>["query"]>().toEqualTypeOf<undefined>();
+    expectTypeOf<InferSchema<undefined>>().toEqualTypeOf<undefined>();
+    // `any` passes through so loosely-typed code is unaffected.
+    expectTypeOf<InferSchema<any>>().toBeAny();
+  });
+
+  test("headers are extracted alongside the other schema fields", () => {
+    expectTypeOf<ApiHeaders<typeof api>["getUser"]>().toEqualTypeOf<{ "x-a": string }>();
+    expectTypeOf<ApiSchema<typeof api>["getUser"]["headers"]>().toEqualTypeOf<{
+      "x-a": string;
+    }>();
+    expectTypeOf<StaticEndpoint<Endpoints["getUser"]>["headers"]>().toEqualTypeOf<{
+      "x-a": string;
+    }>();
+    expectTypeOf<BaseHandlerInput<Endpoints["getUser"]>>().toEqualTypeOf<
+      { params: { id: string } } & { headers: { "x-a": string } }
+    >();
+  });
+
+  test("StaticApi only accepts declared endpoint names", () => {
+    expectTypeOf<StaticApi<Endpoints, "getUser">["params"]>().toEqualTypeOf<{ id: string }>();
+    // @ts-expect-error "getUsr" is not an endpoint
+    expectTypeOf<StaticApi<Endpoints, "getUsr">>().toBeNever();
+  });
+
+  test("TopKeyOf collects top-level keys across union members, skipping dotted keys", () => {
+    const Schema = T.Union([
+      T.Object({ id: T.String(), nested: T.Object({ x: T.String() }) }),
+      T.Object({ id: T.String(), other: T.Number(), "a.b": T.String() }),
+    ]);
+    expectTypeOf<TopKeyOf<typeof Schema>>().toEqualTypeOf<"id" | "nested" | "other">();
   });
 });

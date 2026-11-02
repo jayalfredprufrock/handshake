@@ -4,6 +4,7 @@ import type {
   ClientRequestDefaults,
   Contract,
   ContractBody,
+  ContractHeaders,
   ContractParams,
   ContractQuery,
   ContractResponse,
@@ -242,3 +243,4 @@ export type ApiBody<A extends HasEndpoints> = ContractBody<A>;
 export type ApiResponse<A extends HasEndpoints> = ContractResponse<A>;
 export type ApiParams<A extends HasEndpoints> = ContractParams<A>;
 export type ApiQuery<A extends HasEndpoints> = ContractQuery<A>;
+export type ApiHeaders<A extends HasEndpoints> = ContractHeaders<A>;

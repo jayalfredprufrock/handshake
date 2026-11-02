@@ -43,6 +43,13 @@ export type DeepKeyOf<S extends TSchema> = {
   [K in MemberKeys<S>]: K | `${K}.${NestedKeys<S, K>}`;
 }[MemberKeys<S>];
 
+/**
+ * Top-level keys across every object member of a schema, excluding any containing a
+ * dot (those would be read as a nested path). Computed directly from the members
+ * rather than by filtering {@link DeepKeyOf}, which would first build every nested path.
+ */
+export type TopKeyOf<S extends TSchema> = Exclude<MemberKeys<S>, `${string}.${string}`>;
+
 /** The top-level component of a (possibly nested) key path. */
 type Head<U extends string> = U extends `${infer H}.${string}` ? H : U;
 

@@ -1,7 +1,7 @@
 import { type TArray, type TPartial, type TSchema } from "typebox";
 import * as T from "typebox";
 import { DeepOmit, DeepPick } from "../typebox";
-import type { DeepKeyOf, TDeepOmit, TDeepPick } from "../typebox";
+import type { DeepKeyOf, TDeepOmit, TDeepPick, TopKeyOf } from "../typebox";
 import type { EndpointMeta, Exact, MetaField } from "./create-contract";
 
 export type Merge2<A, B> = A extends readonly string[]
@@ -29,7 +29,7 @@ export type MakePath<B extends string, P> = P extends readonly [infer P1, ...inf
   : B;
 
 /** Top-level keys across every object member of a schema (path params are not nested). */
-export type TopKeyOf<T extends TSchema> = Exclude<DeepKeyOf<T>, `${string}.${string}`>;
+export type { TopKeyOf };
 
 export type CrudContractConfig<T extends TSchema> = {
   params: TopKeyOf<T>[];

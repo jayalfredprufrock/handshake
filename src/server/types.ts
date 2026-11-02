@@ -1,12 +1,12 @@
-import type { Static, TSchema } from "typebox";
+import type { TSchema } from "typebox";
 import type { Contract, Endpoint, InferSchema } from "../contract";
 
 export type BaseHandlerInput<E extends Endpoint> = (E["params"] extends TSchema
-  ? { params: Static<E["params"]> }
+  ? { params: InferSchema<E["params"]> }
   : {}) &
-  (E["body"] extends TSchema ? { body: Static<E["body"]> } : {}) &
-  (E["query"] extends TSchema ? { query: Static<E["query"]> } : {}) &
-  (E["headers"] extends TSchema ? { headers: Static<E["headers"]> } : {});
+  (E["body"] extends TSchema ? { body: InferSchema<E["body"]> } : {}) &
+  (E["query"] extends TSchema ? { query: InferSchema<E["query"]> } : {}) &
+  (E["headers"] extends TSchema ? { headers: InferSchema<E["headers"]> } : {});
 
 export type BaseHandler<E extends Endpoint> = (
   input: BaseHandlerInput<E>,

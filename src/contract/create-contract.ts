@@ -3,7 +3,12 @@ import * as T from "typebox";
 import { ApiError } from "./api-error";
 import type { ValidationIssue } from "./api-error";
 
-export type InferSchema<S> = S extends TSchema ? Static<S> : any;
+/**
+ * The static type of a TypeBox schema, or `undefined` when `S` isn't a schema (an
+ * endpoint field that isn't declared — matching what the runtime sees). `any` stays
+ * `any`, so loosely-typed `Api<any, any>` code keeps working.
+ */
+export type InferSchema<S> = 0 extends 1 & S ? any : S extends TSchema ? Static<S> : undefined;
 
 export interface EndpointMeta extends Record<string, any> {}
 
@@ -456,6 +461,7 @@ export type ContractSchema<C extends HasEndpoints> = {
     response: InferSchema<C["endpoints"][E]["response"]>;
     params: InferSchema<C["endpoints"][E]["params"]>;
     query: InferSchema<C["endpoints"][E]["query"]>;
+    headers: InferSchema<C["endpoints"][E]["headers"]>;
   };
 };
 
@@ -473,4 +479,8 @@ export type ContractParams<C extends HasEndpoints> = {
 
 export type ContractQuery<C extends HasEndpoints> = {
   [E in keyof C["endpoints"]]: InferSchema<C["endpoints"][E]["query"]>;
+};
+
+export type ContractHeaders<C extends HasEndpoints> = {
+  [E in keyof C["endpoints"]]: InferSchema<C["endpoints"][E]["headers"]>;
 };

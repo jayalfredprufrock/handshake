@@ -431,8 +431,9 @@ export type StaticEndpoint<E extends Endpoint> = {
   params: InferSchema<E["params"]>;
   body: InferSchema<E["body"]>;
   query: InferSchema<E["query"]>;
+  headers: InferSchema<E["headers"]>;
 };
 
-export type StaticApi<C extends Record<string, Endpoint>, E> = E extends keyof C
+export type StaticApi<C extends Record<string, Endpoint>, E extends keyof C> = E extends keyof C
   ? StaticEndpoint<C[E]>
   : never;

@@ -24,7 +24,7 @@ type User = InferSchema<typeof UserSchema>;
 // { id: string; name: string }
 ```
 
-If the input is not a `TSchema`, it resolves to `any`.
+If the input is not a `TSchema` (for example, the `body` of an endpoint that declares none), it resolves to `undefined`. An `any` input stays `any`.
 
 ## `StaticEndpoint<E>`
 
@@ -39,8 +39,9 @@ type GetUser = StaticEndpoint<typeof contract.endpoints.getUser>;
 //   path: "/users/:id";
 //   response: { id: string; name: string };
 //   params: { id: string };
-//   body: any;
-//   query: any;
+//   body: undefined;
+//   query: undefined;
+//   headers: undefined;
 // }
 ```
 
