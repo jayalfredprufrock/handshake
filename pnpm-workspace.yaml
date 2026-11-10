@@ -15,6 +15,7 @@ catalog:
   reflect-metadata: ^0.2.2
   rxjs: ^7.8.2
   tslib: ^2.8.1
+  typebox: ^1.4.6
   vite: npm:@voidzero-dev/vite-plus-core@0.2.1
   vite-plus: 0.2.1
 

@@ -16,7 +16,7 @@
     "@nestjs/platform-express": "^11.1.27",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.2",
-    "typebox": "^1.1.13"
+    "typebox": "catalog:"
   },
   "devDependencies": {
     "@nestjs/cli": "^11.0.23",

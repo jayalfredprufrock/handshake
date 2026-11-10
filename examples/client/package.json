@@ -13,6 +13,6 @@
   "dependencies": {
     "@jayalfredprufrock/handshake": "workspace:*",
     "@jayalfredprufrock/handshake-example-contract": "workspace:*",
-    "typebox": "^1.1.13"
+    "typebox": "catalog:"
   }
 }

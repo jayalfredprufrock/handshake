@@ -33,6 +33,9 @@ catalogs:
     tslib:
       specifier: ^2.8.1
       version: 2.8.1
+    typebox:
+      specifier: ^1.4.6
+      version: 1.4.6
 
 overrides:
   vite: npm:@voidzero-dev/vite-plus-core@0.2.1
@@ -44,9 +47,6 @@ importers:
       openapi-types:
         specifier: 'catalog:'
         version: 12.1.3
-      typebox:
-        specifier: ^1.1.13
-        version: 1.1.14
     devDependencies:
       '@nestjs/common':
         specifier: 'catalog:'
@@ -90,6 +90,9 @@ importers:
       tslib:
         specifier: 'catalog:'
         version: 2.8.1
+      typebox:
+        specifier: 'catalog:'
+        version: 1.4.6
       typescript:
         specifier: ^6.0.2
         version: 6.0.2
@@ -118,8 +121,8 @@ importers:
         specifier: workspace:*
         version: link:../contract
       typebox:
-        specifier: ^1.1.13
-        version: 1.1.14
+        specifier: 'catalog:'
+        version: 1.4.6
 
   examples/contract:
     dependencies:
@@ -127,8 +130,8 @@ importers:
         specifier: workspace:*
         version: link:../..
       typebox:
-        specifier: ^1.1.13
-        version: 1.1.14
+        specifier: 'catalog:'
+        version: 1.4.6
 
   examples/hono:
     dependencies:
@@ -145,8 +148,8 @@ importers:
         specifier: ^4.12.9
         version: 4.12.10
       typebox:
-        specifier: ^1.1.13
-        version: 1.1.14
+        specifier: 'catalog:'
+        version: 1.4.6
 
   examples/nestjs:
     dependencies:
@@ -172,8 +175,8 @@ importers:
         specifier: ^7.8.2
         version: 7.8.2
       typebox:
-        specifier: ^1.1.13
-        version: 1.1.14
+        specifier: 'catalog:'
+        version: 1.4.6
     devDependencies:
       '@nestjs/cli':
         specifier: ^11.0.23
@@ -5085,8 +5088,8 @@ packages:
     resolution: {integrity: sha512-faYHw0anBbc/kWF3zFTEnxSFOAGUX9GFbOBthvDdLsIlEoWOFOtS0zgCiQYwIskL9iGXZL3kAXD8OoZ4GmMATA==}
     engines: {node: '>= 18'}
 
-  typebox@1.1.14:
-    resolution: {integrity: sha512-R9qoa9IE8Yevoy06ixre1VkribJwOl1wj5fq60gUK6Qxkd2Cw+omHEaHnJh+uE4ewMjLWweR3RERKvhjEtLWsA==}
+  typebox@1.4.6:
+    resolution: {integrity: sha512-Yh8Mi4hzD7gqcuv9ZIk6HK1KVJKubTlfxaNxkrYK35HCvxoCjCuWVr8cBjQ/ChfA7yliPteJEBWHGFVGWDuF5Q==}
 
   typedarray@0.0.6:
     resolution: {integrity: sha512-/aCDEGatGvZ2BIk+HmLf4ifCJFwvKFNb9/JeZPMulfgFracn9QFcAf5GO8B/mweUjSoblS5In0cWhqpfs/5PQA==}
@@ -10863,7 +10866,7 @@ snapshots:
       media-typer: 1.1.0
       mime-types: 3.0.2
 
-  typebox@1.1.14: {}
+  typebox@1.4.6: {}
 
   typedarray@0.0.6: {}
 

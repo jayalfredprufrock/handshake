@@ -9,6 +9,6 @@
   },
   "dependencies": {
     "@jayalfredprufrock/handshake": "workspace:*",
-    "typebox": "^1.1.13"
+    "typebox": "catalog:"
   }
 }
