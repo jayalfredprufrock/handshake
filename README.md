@@ -385,6 +385,27 @@ import { DeepOmit } from "@jayalfredprufrock/handshake/typebox";
 const Public = DeepOmit(User, ["password", "profile.secretToken"]);
 ```
 
+### Discriminated unions
+
+`DiscriminatedUnion` builds a union of objects told apart by a literal "tag" property. Passing a property that isn't a literal in every variant is a compile error:
+
+```ts
+import { DiscriminatedUnion } from "@jayalfredprufrock/handshake/typebox";
+
+const Cat = Type.Object({ kind: Type.Literal("cat"), meow: Type.Boolean() }, { $id: "Cat" });
+const Dog = Type.Object({ kind: Type.Literal("dog"), bark: Type.Number() }, { $id: "Dog" });
+
+const Pet = DiscriminatedUnion("kind", [Cat, Dog]);
+DiscriminatedUnion("knd", [Cat, Dog]); // ✗ type error
+```
+
+It's a plain TypeBox union with an extra `discriminator: { propertyName }` annotation, which handshake uses in two places:
+
+- **Faster responses.** When an endpoint's `response` is a discriminated union, the server reads the tag and cleans/validates against just that variant, instead of trying every variant in turn. Validation errors also point at the field that failed inside that variant. A missing or unknown tag falls back to the full union. This applies to the top-level response schema only; unions nested deeper are still checked variant by variant.
+- **Better OpenAPI.** The union is emitted as `oneOf` with a `discriminator`. Variants that declare a `$id` (as above) become named components and get a `mapping` entry (`cat → #/components/schemas/Cat`), which code generators use to produce proper `Cat`/`Dog` types. Inline variants still appear in `oneOf`, but can't be mapped.
+
+`IsDiscriminatedUnion(schema)` and the `TDiscriminatedUnion<D, Types>` type are exported too, for tools that want to treat these unions specially.
+
 ## CRUD contracts
 
 `createCrud` (from `/contract`) generates `get`/`list`/`create`/`update`/`delete` endpoints from a single schema, with `create` defaulting to `201`. See the docs for `params`/`hidden`/`readonly`/`immutable` options.
