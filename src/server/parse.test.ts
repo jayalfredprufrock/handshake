@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vite-plus/test";
 import { Type } from "typebox";
+import { DiscriminatedUnion } from "../typebox/discriminated-union";
 import {
   normalizeIssues,
   parseBody,
@@ -284,5 +285,46 @@ describe("parseResponse strictness", () => {
   test("still reports wrong types on declared properties as a server bug", () => {
     const schema = Type.Object({ a: Type.String() });
     expect(() => parseResponse(schema, { a: 123 })).toThrow(ResponseValidationError);
+  });
+});
+
+describe("parseResponse with a DiscriminatedUnion", () => {
+  const Cat = Type.Object({ kind: Type.Literal("cat"), meow: Type.Boolean() });
+  const Dog = Type.Object(
+    { kind: Type.Literal("dog"), bark: Type.Number() },
+    { additionalProperties: true },
+  );
+  const Pet = DiscriminatedUnion("kind", [Cat, Dog]);
+
+  test("cleans against the variant the tag selects", () => {
+    expect(parseResponse(Pet, { kind: "cat", meow: true, secret: "LEAK" })).toEqual({
+      kind: "cat",
+      meow: true,
+    });
+  });
+
+  test("the selected variant is still force-closed", () => {
+    expect(parseResponse(Pet, { kind: "dog", bark: 1, secret: "LEAK" })).toEqual({
+      kind: "dog",
+      bark: 1,
+    });
+  });
+
+  test("validates against the selected variant only", () => {
+    try {
+      parseResponse(Pet, { kind: "cat", meow: "yes" });
+      expect.unreachable();
+    } catch (err) {
+      expect(err).toBeInstanceOf(ResponseValidationError);
+      // Variant-level error at `meow`, not a union-level `anyOf` failure.
+      const issues = (err as ResponseValidationError).issues as { instancePath: string }[];
+      expect(issues.some((i) => i.instancePath === "/meow")).toBe(true);
+    }
+  });
+
+  test("falls back to the full union for an unknown or missing tag", () => {
+    expect(() => parseResponse(Pet, { kind: "fish" })).toThrow(ResponseValidationError);
+    expect(() => parseResponse(Pet, { meow: true })).toThrow(ResponseValidationError);
+    expect(() => parseResponse(Pet, "cat")).toThrow(ResponseValidationError);
   });
 });

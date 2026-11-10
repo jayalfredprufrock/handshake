@@ -2,6 +2,7 @@ import { describe, expect, test } from "vite-plus/test";
 import * as T from "typebox";
 import type { OpenAPIV3_1 } from "openapi-types";
 import { createApi, createContract } from "../contract";
+import { DiscriminatedUnion } from "../typebox/discriminated-union";
 import { generateOpenApi } from "./index";
 
 const User = T.Object({ id: T.String(), name: T.String() }, { $id: "User" });
@@ -303,5 +304,65 @@ describe("generateOpenApi request body strictness", () => {
     expect(out.components?.schemas).not.toHaveProperty("Open");
     expect(bodyOf(out, "/api/w")).toMatchObject({ additionalProperties: true });
     expect(response).toMatchObject({ additionalProperties: false });
+  });
+});
+
+describe("generateOpenApi discriminated unions", () => {
+  const Cat = T.Object({ kind: T.Literal("cat"), meow: T.Boolean() }, { $id: "Cat" });
+  const Dog = T.Object({ kind: T.Literal("dog"), bark: T.Number() }, { $id: "Dog" });
+  const Fish = T.Object({ kind: T.Literal("fish") });
+
+  function responseSchema(response: T.TSchema): Record<string, unknown> {
+    const api = createApi("/", {
+      pets: createContract("/", { getPet: { method: "GET", path: "/pet", response } }),
+    });
+    const spec = generateOpenApi(api, { info: { title: "t", version: "1" } });
+    const res = spec.paths!["/pet"]!.get!.responses!["200"] as OpenAPIV3_1.ResponseObject;
+    return res.content!["application/json"]!.schema as Record<string, unknown>;
+  }
+
+  test("emits oneOf with a mapping from each tag to its component", () => {
+    expect(responseSchema(DiscriminatedUnion("kind", [Cat, Dog]))).toEqual({
+      oneOf: [{ $ref: "#/components/schemas/Cat" }, { $ref: "#/components/schemas/Dog" }],
+      discriminator: {
+        propertyName: "kind",
+        mapping: { cat: "#/components/schemas/Cat", dog: "#/components/schemas/Dog" },
+      },
+    });
+  });
+
+  test("maps only $ref variants; inline ones stay in oneOf", () => {
+    const schema = responseSchema(DiscriminatedUnion("kind", [Cat, Fish]));
+    expect(schema.anyOf).toBeUndefined();
+    expect(schema.oneOf).toHaveLength(2);
+    expect(schema.discriminator).toEqual({
+      propertyName: "kind",
+      mapping: { cat: "#/components/schemas/Cat" },
+    });
+  });
+
+  test("omits mapping when no variant is a component", () => {
+    const Bird = T.Object({ kind: T.Literal("bird") });
+    expect(responseSchema(DiscriminatedUnion("kind", [Fish, Bird])).discriminator).toEqual({
+      propertyName: "kind",
+    });
+  });
+
+  test("keeps a user-written mapping entry over the derived one", () => {
+    const schema = responseSchema(
+      T.Union([Cat, Dog], {
+        discriminator: { propertyName: "kind", mapping: { cat: "#/components/schemas/Feline" } },
+      }),
+    );
+    expect(schema.discriminator).toEqual({
+      propertyName: "kind",
+      mapping: { cat: "#/components/schemas/Feline", dog: "#/components/schemas/Dog" },
+    });
+  });
+
+  test("leaves plain unions as anyOf", () => {
+    const schema = responseSchema(T.Union([Cat, Dog]));
+    expect(schema.anyOf).toHaveLength(2);
+    expect(schema).not.toHaveProperty("discriminator");
   });
 });

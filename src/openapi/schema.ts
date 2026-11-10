@@ -21,6 +21,49 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 }
 
 /**
+ * Finishes a converted union carrying `discriminator.propertyName` (see
+ * `DiscriminatedUnion`) the way OpenAPI tooling expects, matching the error responses:
+ *
+ * - `anyOf` becomes `oneOf`. Distinct tag literals make the variants mutually exclusive,
+ *   and code generators handle `oneOf` + `discriminator` best.
+ * - Each variant converted to a `$ref` (one declaring a `$id`) gets a `mapping` entry from
+ *   its tag literal to that ref. Inline variants have nothing to point at, so they're
+ *   left to the validator. Entries the user wrote in `mapping` take precedence.
+ *
+ * Anything else is returned untouched.
+ */
+function discriminate(source: TSchema, out: Record<string, unknown>): Record<string, unknown> {
+  const discriminator = out.discriminator;
+  const variants = (source as { anyOf?: unknown }).anyOf;
+  if (!isPlainObject(discriminator) || !Array.isArray(variants) || !Array.isArray(out.anyOf)) {
+    return out;
+  }
+  const prop = discriminator.propertyName;
+  if (typeof prop !== "string") return out;
+
+  const mapping: Record<string, string> = {};
+  (out.anyOf as Schema[]).forEach((converted, index) => {
+    const tag = (variants[index] as { properties?: Record<string, { const?: unknown }> })
+      .properties?.[prop]?.const;
+    if ("$ref" in converted && (typeof tag === "string" || typeof tag === "number")) {
+      mapping[String(tag)] = converted.$ref;
+    }
+  });
+  const userMapping = isPlainObject(discriminator.mapping) ? discriminator.mapping : {};
+  const merged = { ...mapping, ...userMapping };
+
+  const { anyOf, ...rest } = out;
+  return {
+    ...rest,
+    oneOf: anyOf,
+    discriminator: {
+      ...discriminator,
+      ...(Object.keys(merged).length > 0 && { mapping: merged }),
+    },
+  };
+}
+
+/**
  * Converts TypeBox schemas (JSON Schema 2020-12, which OpenAPI 3.1 accepts
  * directly) into OpenAPI schema objects, collecting any `$id`-bearing schema into
  * `components/schemas` and replacing it with a `$ref`. TypeBox's symbol-keyed
@@ -58,7 +101,7 @@ export class SchemaRegistry {
       if (key === "$id") continue;
       out[key] = this.convertValue(key, value);
     }
-    return out as SchemaObject;
+    return discriminate(schema, out) as SchemaObject;
   }
 
   private convertValue(key: string, value: unknown): unknown {

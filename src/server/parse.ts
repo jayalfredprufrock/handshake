@@ -1,6 +1,7 @@
 import type { TSchema } from "typebox";
 import * as T from "typebox/value";
 import type { ValidationIssue } from "../contract";
+import { IsDiscriminatedUnion } from "../typebox/discriminated-union";
 import { closeProperties } from "../utils/close-properties";
 
 /**
@@ -159,6 +160,25 @@ export class ResponseValidationError extends Error {
 }
 
 /**
+ * For a top-level {@link DiscriminatedUnion}, returns the one variant whose tag literal
+ * matches `raw`, so `Clean` and `Assert` skip TypeBox's try-every-variant loop. Anything
+ * else (no annotation, missing or unknown tag, non-object value) returns `schema`
+ * unchanged, so errors match the full-union path. Selection happens on the already-closed
+ * union, so the chosen variant is force-closed too.
+ */
+function selectVariant(schema: TSchema, raw: unknown): TSchema {
+  if (!IsDiscriminatedUnion(schema) || typeof raw !== "object" || raw === null) return schema;
+  const prop = schema.discriminator.propertyName;
+  const tag = (raw as Record<string, unknown>)[prop];
+  const match = schema.anyOf.find(
+    (variant) =>
+      (variant as { properties?: Record<string, { const?: unknown }> }).properties?.[prop]
+        ?.const === tag,
+  );
+  return match ?? schema;
+}
+
+/**
  * Validates a handler response against a schema. Strips unknown properties, then throws a
  * {@link ResponseValidationError} if the known properties don't match.
  *
@@ -169,7 +189,7 @@ export class ResponseValidationError extends Error {
  * return genuinely dynamic payloads, since neither declares `properties`.
  */
 export function parseResponse(schema: TSchema, raw: unknown): unknown {
-  const closed = closeProperties(schema, { mode: "force" });
+  const closed = selectVariant(closeProperties(schema, { mode: "force" }), raw);
   const value = T.Clean(closed, raw);
   try {
     T.Assert(closed, value);
