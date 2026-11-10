@@ -31,6 +31,17 @@ describe("DiscriminatedUnion", () => {
     DiscriminatedUnion("kind", [Cat, NoTag]);
     // @ts-expect-error tag isn't a literal in one variant
     DiscriminatedUnion("kind", [Cat, StringTag]);
+    // @ts-expect-error tag isn't a literal inside a nested group
+    DiscriminatedUnion("kind", [Cat, T.Union([Dog, StringTag])]);
+  });
+
+  test("flattens nested variant groups", () => {
+    const Fish = T.Object({ kind: T.Literal("fish") });
+    const Pet = DiscriminatedUnion("kind", [T.Union([Cat, T.Union([Dog])]), Fish]);
+    expect(Pet.anyOf).toEqual([Cat, Dog, Fish]);
+    expectTypeOf<Static<typeof Pet>>().toEqualTypeOf<
+      { kind: "cat"; meow: boolean } | { kind: "dog"; bark: number } | { kind: "fish" }
+    >();
   });
 });
 

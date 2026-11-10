@@ -331,6 +331,12 @@ describe("generateOpenApi discriminated unions", () => {
     });
   });
 
+  test("maps variants from nested groups like a flat union", () => {
+    expect(responseSchema(DiscriminatedUnion("kind", [T.Union([Cat, Dog])]))).toEqual(
+      responseSchema(DiscriminatedUnion("kind", [Cat, Dog])),
+    );
+  });
+
   test("maps only $ref variants; inline ones stay in oneOf", () => {
     const schema = responseSchema(DiscriminatedUnion("kind", [Cat, Fish]));
     expect(schema.anyOf).toBeUndefined();

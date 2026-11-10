@@ -327,4 +327,19 @@ describe("parseResponse with a DiscriminatedUnion", () => {
     expect(() => parseResponse(Pet, { meow: true })).toThrow(ResponseValidationError);
     expect(() => parseResponse(Pet, "cat")).toThrow(ResponseValidationError);
   });
+
+  test("selects a variant from nested groups like a flat union", () => {
+    const Grouped = DiscriminatedUnion("kind", [Type.Union([Cat, Dog])]);
+    expect(parseResponse(Grouped, { kind: "cat", meow: true, secret: "LEAK" })).toEqual({
+      kind: "cat",
+      meow: true,
+    });
+    try {
+      parseResponse(Grouped, { kind: "cat", meow: "yes" });
+      expect.unreachable();
+    } catch (err) {
+      const issues = (err as ResponseValidationError).issues as { instancePath: string }[];
+      expect(issues.some((i) => i.instancePath === "/meow")).toBe(true);
+    }
+  });
 });
