@@ -1,6 +1,7 @@
 import type { TSchema } from "typebox";
 import * as T from "typebox/value";
-import type { ValidationIssue } from "../contract";
+import type { Endpoint, ValidationIssue } from "../contract";
+import { AdmitsNull, IsClearable } from "../typebox/clearable";
 import { IsDiscriminatedUnion } from "../typebox/discriminated-union";
 import { closeProperties } from "../utils/close-properties";
 
@@ -137,12 +138,39 @@ export function parseHeaders(schema: TSchema, raw: Record<string, string>): unkn
 }
 
 /**
+ * Converts a `null` sent for a top-level {@link Clearable} property, in place. Under PATCH
+ * it becomes a present `undefined` key: the key's presence tells the repository to remove
+ * the field. Under any other method the key is deleted, so server defaults apply.
+ *
+ * Top level only: patches are shallow, and a nested `undefined` would reach storage
+ * clients that reject it. A schema that admits `null` itself keeps it as a value. Any other
+ * `null` is left for `Assert` to reject, as before.
+ */
+function convertClearedNulls(schema: TSchema, value: unknown, method?: Endpoint["method"]): void {
+  const properties = (schema as { properties?: Record<string, TSchema> }).properties;
+  if (!properties || typeof value !== "object" || value === null || Array.isArray(value)) return;
+  const record = value as Record<string, unknown>;
+  for (const key of Object.keys(record)) {
+    if (record[key] !== null) continue;
+    const prop = properties[key];
+    if (!IsClearable(prop) || AdmitsNull(prop)) continue;
+    if (method === "PATCH") record[key] = undefined;
+    else delete record[key];
+  }
+}
+
+/**
  * Parses and validates a request body against a schema.
  * Rejects missing properties, and extra ones unless the schema opts out via its own
- * `additionalProperties`. No coercion is performed.
+ * `additionalProperties`. No coercion is performed, apart from turning a `null` sent for a
+ * {@link Clearable} property into "remove" (PATCH) or "absent" (other methods).
+ *
+ * Clearing runs after `Default`, so a default can't refill a field being cleared. Without a
+ * `method`, a cleared field is treated as on a create: the key is dropped.
  */
-export function parseBody(schema: TSchema, raw: unknown): unknown {
+export function parseBody(schema: TSchema, raw: unknown, method?: Endpoint["method"]): unknown {
   const value = T.Default(schema, raw);
+  convertClearedNulls(schema, value, method);
   T.Assert(closeProperties(schema), value);
   return value;
 }

@@ -1,4 +1,5 @@
 import type { TSchema } from "typebox";
+import { Memory } from "typebox/system";
 
 /**
  * How a node's own `additionalProperties` is decided.
@@ -34,38 +35,6 @@ const SUBSCHEMA_RECORD_KEYS = new Set(["properties", "patternProperties", "$defs
 
 function isSchemaObject(value: unknown): value is TSchema {
   return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-/**
- * Copies a schema, applying `patch`, while preserving NON-ENUMERABLE own properties.
- *
- * TypeBox v1 tags every schema with a non-enumerable `~kind`. Object spread and rest
- * destructuring copy only enumerable own properties, so `{ ...schema }` silently drops that
- * tag — and a schema without it loses TypeBox's kind-aware paths: `Convert` stops coercing
- * and `Clean` stops stripping, both silently. Descriptor-level cloning is what keeps a
- * modified schema behaving like a real TypeBox schema.
- */
-function cloneWith(schema: TSchema, patch: Record<string, unknown>): TSchema {
-  const next = Object.create(
-    Object.getPrototypeOf(schema),
-    Object.getOwnPropertyDescriptors(schema),
-  ) as TSchema;
-  for (const [key, value] of Object.entries(patch)) {
-    Object.defineProperty(next, key, {
-      value,
-      enumerable: true,
-      writable: true,
-      configurable: true,
-    });
-  }
-  return next;
-}
-
-function withoutId(schema: TSchema): TSchema {
-  if (!("$id" in schema)) return schema;
-  const next = cloneWith(schema, {});
-  delete (next as { $id?: unknown }).$id;
-  return next;
 }
 
 /**
@@ -136,9 +105,11 @@ function walk(schema: TSchema, options: Required<CloseOptions>, closeRoot: boole
   // A diverging node must shed its `$id` even when nothing else changed — otherwise the
   // request's untouched schema and the response's closed one race for the same component.
   const shedId = options.dropSharedIds && divergesBetweenModes(schema);
-  if (Object.keys(patch).length === 0) return shedId ? withoutId(schema) : schema;
-  const next = cloneWith(schema, patch);
-  return shedId ? withoutId(next) : next;
+  // `Memory.Update`/`Discard` copy property descriptors, so TypeBox's non-enumerable `~kind`
+  // tag survives. A spread would drop it, and `Convert`/`Clean` would silently stop
+  // coercing and stripping at that node. Child schemas are shared, not cloned.
+  const next = Object.keys(patch).length === 0 ? schema : Memory.Update(schema, {}, patch);
+  return shedId && "$id" in next ? Memory.Discard(next, ["$id"]) : next;
 }
 
 /**

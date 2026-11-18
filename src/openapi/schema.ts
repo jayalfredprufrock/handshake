@@ -73,17 +73,24 @@ export class SchemaRegistry {
   readonly schemas: Record<string, SchemaObject> = {};
   private readonly inProgress = new Set<string>();
 
-  /** Convert a schema; hoists it to `components/schemas` when it declares a `$id`. */
+  /**
+   * Convert a schema; hoists it to `components/schemas` when it declares a `$id`. An
+   * `x-clearable` mark describes the property, not the shared type, so it stays beside the
+   * `$ref` instead of entering the component.
+   */
   convert(schema: TSchema): Schema {
     const id = (schema as { $id?: unknown }).$id;
     if (typeof id === "string" && id.length > 0) {
       const name = sanitizeName(id);
+      const clearable = (schema as { "x-clearable"?: unknown })["x-clearable"] === true;
       if (!(name in this.schemas) && !this.inProgress.has(name)) {
         this.inProgress.add(name);
         this.schemas[name] = this.convertBody(schema);
+        delete (this.schemas[name] as { "x-clearable"?: unknown })["x-clearable"];
         this.inProgress.delete(name);
       }
-      return { $ref: `#/components/schemas/${name}` };
+      const ref = { $ref: `#/components/schemas/${name}` };
+      return clearable ? ({ ...ref, "x-clearable": true } as ReferenceObject) : ref;
     }
     return this.convertBody(schema);
   }

@@ -2,6 +2,7 @@ import { describe, expect, expectTypeOf, test, vi } from "vite-plus/test";
 import * as T from "typebox";
 import { ApiError, createApi, createContract, errorEnvelope, type Contract } from "../contract";
 import { createFetchClient, HttpError } from "../client";
+import { Clearable } from "../typebox/clearable";
 import type { RetryContext } from "./make-client";
 
 /**
@@ -670,5 +671,34 @@ describe("contract-declared request defaults", () => {
     });
     await expect(client.recordEvent({ name: "click" })).rejects.toBeInstanceOf(HttpError);
     expect(seen).toEqual(["omit", "include"]);
+  });
+});
+
+describe("clearable body properties", () => {
+  const Org = T.Object({ name: T.String(), logoUrl: Clearable(T.String()) });
+  const contract = createContract("/", {
+    updateOrg: {
+      method: "PATCH",
+      path: "/orgs/:id",
+      params: T.Object({ id: T.String() }),
+      body: T.Partial(Org),
+      response: Org,
+    },
+  });
+
+  test("accept null in the request body, but not in the response", async () => {
+    const fetch = okFetch({ name: "a" });
+    const client = createFetchClient(apiOf(contract), { baseUrl: "http://x", fetch });
+    expectTypeOf(client.updateOrg).parameter(1).toEqualTypeOf<{
+      name?: string;
+      logoUrl?: string | null;
+    }>();
+    expectTypeOf(client.updateOrg).returns.resolves.toEqualTypeOf<{
+      name: string;
+      logoUrl?: string;
+    }>();
+    await client.updateOrg({ id: "1" }, { logoUrl: null });
+    const [request] = fetch.mock.calls[0] as unknown as [Request];
+    expect(await request.text()).toBe(JSON.stringify({ logoUrl: null }));
   });
 });

@@ -50,7 +50,9 @@ export class HandshakeInterceptor implements NestInterceptor {
       );
     }
     if (endpoint.body) {
-      input.body = guardValidation(() => parseBody(endpoint.body as TSchema, req.body));
+      input.body = guardValidation(() =>
+        parseBody(endpoint.body as TSchema, req.body, endpoint.method),
+      );
     }
 
     req[HANDSHAKE_INPUT] = input;

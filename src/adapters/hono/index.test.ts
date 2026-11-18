@@ -3,6 +3,7 @@ import * as T from "typebox";
 import type { Static } from "typebox";
 import type { Endpoint } from "../../contract";
 import { createApi, createContract } from "../../contract";
+import { Clearable } from "../../typebox/clearable";
 import { buildRoutes, createHonoApp } from "./index";
 
 const contract = createContract("/api", {
@@ -339,5 +340,49 @@ describe("hono adapter", () => {
         // createUser missing
       } as any);
     }).toThrow(/Missing handlers/);
+  });
+});
+
+describe("clearable body properties", () => {
+  const Org = T.Object({ name: T.String(), logoUrl: Clearable(T.String()) });
+  const orgs = createApi("/", {
+    main: createContract("/", {
+      createOrg: { method: "POST", path: "/orgs", body: Org, response: T.Unknown() },
+      updateOrg: { method: "PATCH", path: "/orgs", body: T.Partial(Org), response: T.Unknown() },
+    }),
+  });
+  const seen: Record<string, unknown>[] = [];
+  const app = createHonoApp({
+    routes: [
+      buildRoutes(orgs, "main", {
+        createOrg: ({ body }) => {
+          expectTypeOf(body).toEqualTypeOf<{ name: string; logoUrl?: string }>();
+          seen.push(body);
+          return {};
+        },
+        updateOrg: ({ body }) => {
+          seen.push(body);
+          return {};
+        },
+      }),
+    ],
+  });
+  const send = (method: string, body: unknown) =>
+    app.request("/orgs", {
+      method,
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+
+  test("PATCH turns null into a present undefined key", async () => {
+    expect((await send("PATCH", { logoUrl: null })).status).toBe(200);
+    const body = seen.pop()!;
+    expect("logoUrl" in body).toBe(true);
+    expect(body.logoUrl).toBeUndefined();
+  });
+
+  test("POST drops the key", async () => {
+    expect((await send("POST", { name: "a", logoUrl: null })).status).toBe(200);
+    expect(seen.pop()).toEqual({ name: "a" });
   });
 });

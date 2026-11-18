@@ -2,6 +2,7 @@ import { describe, expect, test } from "vite-plus/test";
 import * as T from "typebox";
 import type { OpenAPIV3_1 } from "openapi-types";
 import { createApi, createContract } from "../contract";
+import { Clearable } from "../typebox/clearable";
 import { DiscriminatedUnion } from "../typebox/discriminated-union";
 import { generateOpenApi } from "./index";
 
@@ -370,5 +371,63 @@ describe("generateOpenApi discriminated unions", () => {
     const schema = responseSchema(T.Union([Cat, Dog]));
     expect(schema.anyOf).toHaveLength(2);
     expect(schema).not.toHaveProperty("discriminator");
+  });
+});
+
+describe("clearable properties", () => {
+  const Address = T.Object({ city: T.String() }, { $id: "Address" });
+  const Org = T.Object(
+    {
+      name: T.String(),
+      logoUrl: Clearable(T.String()),
+      address: Clearable(Address),
+      tagline: Clearable(T.Union([T.String(), T.Null()])),
+      nested: T.Optional(T.Object({ inner: Clearable(T.String()) })),
+    },
+    { $id: "Org" },
+  );
+  const api = createApi("/", {
+    orgs: createContract("/", {
+      getOrg: { method: "GET", path: "/org", response: Org },
+      updateOrg: { method: "PATCH", path: "/org", body: T.Partial(Org), response: Org },
+    }),
+  });
+  const spec = generateOpenApi(api, { info: { title: "t", version: "1" } });
+  const op = spec.paths!["/org"]!.patch!;
+  const body = (op.requestBody as OpenAPIV3_1.RequestBodyObject).content["application/json"]!
+    .schema as Record<string, any>;
+
+  test("top-level clearable body properties are nullable and keep x-clearable", () => {
+    expect(body.properties.logoUrl).toEqual({
+      anyOf: [{ type: "string" }, { type: "null" }],
+      "x-clearable": true,
+    });
+    expect(body.properties.address).toEqual({
+      anyOf: [{ $ref: "#/components/schemas/Address" }, { type: "null" }],
+      "x-clearable": true,
+    });
+  });
+
+  test("a property that already admits null is left as declared", () => {
+    expect(body.properties.tagline.anyOf).toEqual([{ type: "string" }, { type: "null" }]);
+    expect(body.properties.tagline["x-clearable"]).toBe(true);
+  });
+
+  test("nested clearable properties aren't widened, matching the server", () => {
+    expect(body.properties.nested.properties.inner).toEqual({
+      type: "string",
+      "x-clearable": true,
+    });
+  });
+
+  test("responses and shared components don't advertise null", () => {
+    const Org = spec.components!.schemas!.Org as Record<string, any>;
+    expect(Org.properties.logoUrl).toEqual({ type: "string", "x-clearable": true });
+    expect(spec.components!.schemas!.Address).toEqual({
+      type: "object",
+      properties: { city: { type: "string" } },
+      required: ["city"],
+      additionalProperties: false,
+    });
   });
 });

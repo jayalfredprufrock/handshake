@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vite-plus/test";
 import { Type } from "typebox";
+import { Clearable } from "../typebox/clearable";
 import { DiscriminatedUnion } from "../typebox/discriminated-union";
 import {
   normalizeIssues,
@@ -100,6 +101,85 @@ describe("normalizeIssues", () => {
 });
 
 describe("parseBody", () => {
+  describe("clearable properties", () => {
+    const Org = Type.Object({
+      name: Type.String(),
+      logoUrl: Clearable(Type.String()),
+      theme: Clearable(Type.String({ default: "light" })),
+      note: Type.Optional(Type.String()),
+      tagline: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+    });
+    const Patch = Type.Partial(Org);
+
+    test("PATCH: null becomes a present undefined key", () => {
+      const body = parseBody(Patch, { logoUrl: null }, "PATCH") as Record<string, unknown>;
+      expect("logoUrl" in body).toBe(true);
+      expect(body.logoUrl).toBeUndefined();
+    });
+
+    test("non-PATCH: null drops the key", () => {
+      const body = parseBody(Org, { name: "a", logoUrl: null }, "POST") as Record<string, unknown>;
+      expect("logoUrl" in body).toBe(false);
+    });
+
+    test("no method is treated like a create", () => {
+      expect(parseBody(Org, { name: "a", logoUrl: null })).not.toHaveProperty("logoUrl");
+    });
+
+    test("a field with a default can still be cleared", () => {
+      const body = parseBody(Patch, { theme: null }, "PATCH") as Record<string, unknown>;
+      expect("theme" in body).toBe(true);
+      expect(body.theme).toBeUndefined();
+    });
+
+    test("on a create, clearing a defaulted field leaves the default", () => {
+      // `Default` runs first and sees `null`, not a gap, so nothing is filled in; the key
+      // is then dropped. The default only applies when the key was absent to begin with.
+      expect(parseBody(Org, { name: "a" }, "POST")).toEqual({ name: "a", theme: "light" });
+      expect(parseBody(Org, { name: "a", theme: null }, "POST")).toEqual({ name: "a" });
+    });
+
+    test("a nullable field keeps null as a value", () => {
+      expect(parseBody(Patch, { tagline: null }, "PATCH")).toMatchObject({ tagline: null });
+      expect(parseBody(Org, { name: "a", tagline: null }, "POST")).toMatchObject({
+        name: "a",
+        tagline: null,
+      });
+    });
+
+    test("a non-clearable optional still rejects null", () => {
+      expect(() => parseBody(Patch, { note: null }, "PATCH")).toThrow();
+      expect(() => parseBody(Org, { name: "a", note: null }, "POST")).toThrow();
+    });
+
+    test("a plain Partial body still rejects null", () => {
+      const Plain = Type.Partial(Type.Object({ a: Type.String() }));
+      expect(() => parseBody(Plain, { a: null }, "PATCH")).toThrow();
+    });
+
+    test("a required property can't be cleared", () => {
+      const Required = Type.Required(Org);
+      expect(() =>
+        parseBody(
+          Required,
+          {
+            name: "a",
+            theme: "x",
+            note: "n",
+            tagline: "t",
+            logoUrl: null,
+          },
+          "PATCH",
+        ),
+      ).toThrow();
+    });
+
+    test("nested clearable properties are not converted", () => {
+      const Outer = Type.Partial(Type.Object({ org: Patch }));
+      expect(() => parseBody(Outer, { org: { logoUrl: null } }, "PATCH")).toThrow();
+    });
+  });
+
   test("rejects extra properties on object bodies", () => {
     const schema = Type.Object({ name: Type.String() });
     expect(() => parseBody(schema, { name: "a", extra: 1 })).toThrow();

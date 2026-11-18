@@ -196,7 +196,7 @@ function buildModule(params: BuildModuleParams): Routes {
 
         if (endpoint.body) {
           try {
-            input.body = parseBody(endpoint.body, await c.req.json());
+            input.body = parseBody(endpoint.body, await c.req.json(), endpoint.method);
           } catch (error) {
             if (error instanceof AssertError)
               return validationError(normalizeIssues(error.cause.errors));

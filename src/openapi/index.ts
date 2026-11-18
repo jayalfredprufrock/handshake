@@ -1,6 +1,9 @@
 import type { OpenAPIV3_1 } from "openapi-types";
 import type { Api, Endpoint, ErrorMap } from "../contract";
 import { HANDSHAKE_ERROR_KIND, joinPath } from "../contract";
+import type { TSchema } from "typebox";
+import { Memory } from "typebox/system";
+import { AdmitsNull, IsClearable } from "../typebox/clearable";
 import { closeProperties } from "../utils/close-properties";
 import { SchemaRegistry } from "./schema";
 import type { Schema } from "./schema";
@@ -199,6 +202,31 @@ function buildTagIndex(api: Api<any, any>): {
   };
 }
 
+/**
+ * A request body schema as `parseBody` accepts it: closed, and with every top-level
+ * `Clearable` property that doesn't already admit `null` widened to `anyOf [S, null]`.
+ * Only the top level, because that's all the server converts.
+ *
+ * Such a body no longer matches the same schema used as a response (where storage never
+ * holds `null`), so its root sheds `$id` rather than racing a response for one component.
+ */
+function requestBodySchema(body: TSchema): TSchema {
+  const closed = closeProperties(body, { dropSharedIds: true });
+  const properties = (closed as { properties?: Record<string, TSchema> }).properties;
+  if (!properties) return closed;
+  let widened: Record<string, unknown> | undefined;
+  for (const [key, prop] of Object.entries(properties)) {
+    if (!IsClearable(prop) || AdmitsNull(prop)) continue;
+    widened ??= { ...properties };
+    widened[key] = {
+      anyOf: [Memory.Discard(prop, ["x-clearable"]), { type: "null" }],
+      "x-clearable": true,
+    };
+  }
+  if (!widened) return closed;
+  return Memory.Update(Memory.Discard(closed, ["$id"]), {}, { properties: widened });
+}
+
 function buildOperation(
   name: string,
   endpoint: Endpoint,
@@ -242,10 +270,11 @@ function buildOperation(
           requestBody: {
             required: true,
             // Closed with the same helper `parseBody` uses, so the spec advertises exactly
-            // the strictness the server enforces — including an author's opt-out.
+            // the strictness the server enforces — including an author's opt-out — and
+            // the `null` it accepts for clearable properties.
             content: {
               "application/json": {
-                schema: registry.convert(closeProperties(endpoint.body, { dropSharedIds: true })),
+                schema: registry.convert(requestBodySchema(endpoint.body)),
               },
             },
           },

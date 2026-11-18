@@ -1,7 +1,18 @@
 import type { TSchema } from "typebox";
 import type { Api, ClientRequestDefaults, Endpoint, InferSchema } from "../contract";
 import { ApiError, isErrorEnvelope, REQUEST_DEFAULT_KEYS } from "../contract";
+import type { StaticClearable } from "../typebox/clearable";
 import { HttpError } from "./http-error";
+
+/**
+ * A request body as the client sends it: like {@link InferSchema}, but a `Clearable`
+ * property also accepts `null`, which tells the server to clear it.
+ */
+export type InferBody<S> = 0 extends 1 & S
+  ? any
+  : S extends TSchema
+    ? StaticClearable<S>
+    : undefined;
 
 type ClientRequestInit = Omit<RequestInit, "method" | "body">;
 
@@ -106,7 +117,7 @@ export type ClientEndpoint<E extends Endpoint> = E["params"] extends TSchema
   ? E["body"] extends TSchema
     ? (
         params: InferSchema<E["params"]>,
-        body: InferSchema<E["body"]>,
+        body: InferBody<E["body"]>,
         ...options: OptionsArgs<E>
       ) => Promise<InferSchema<E["response"]>>
     : (
@@ -115,7 +126,7 @@ export type ClientEndpoint<E extends Endpoint> = E["params"] extends TSchema
       ) => Promise<InferSchema<E["response"]>>
   : E["body"] extends TSchema
     ? (
-        body: InferSchema<E["body"]>,
+        body: InferBody<E["body"]>,
         ...options: OptionsArgs<E>
       ) => Promise<InferSchema<E["response"]>>
     : (...options: OptionsArgs<E>) => Promise<InferSchema<E["response"]>>;
@@ -433,7 +444,7 @@ export type StaticEndpoint<E extends Endpoint> = {
   path: E["path"];
   response: InferSchema<E["response"]>;
   params: InferSchema<E["params"]>;
-  body: InferSchema<E["body"]>;
+  body: InferBody<E["body"]>;
   query: InferSchema<E["query"]>;
   headers: InferSchema<E["headers"]>;
 };
