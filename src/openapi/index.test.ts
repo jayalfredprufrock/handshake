@@ -462,3 +462,67 @@ describe("PATCH body defaults", () => {
     expect(Settings.properties.theme.default).toBe("light");
   });
 });
+
+describe("union request bodies", () => {
+  const Email = T.Object(
+    {
+      kind: T.Literal("email"),
+      address: T.String(),
+      digest: T.Optional(T.Boolean({ default: true })),
+      signature: Clearable(T.String()),
+    },
+    { $id: "Email" },
+  );
+  const Sms = T.Object({ kind: T.Literal("sms"), number: T.String() }, { $id: "Sms" });
+  const Tagged = DiscriminatedUnion("kind", [Email, Sms]);
+  const Untagged = T.Union([Email, Sms]);
+  const api = createApi("/", {
+    ch: createContract("/", {
+      getChannel: { method: "GET", path: "/c", response: Tagged },
+      patchTagged: { method: "PATCH", path: "/t", body: Tagged, response: T.Null() },
+      postTagged: { method: "POST", path: "/t", body: Tagged, response: T.Null() },
+      patchUntagged: { method: "PATCH", path: "/u", body: Untagged, response: T.Null() },
+    }),
+  });
+  const spec = generateOpenApi(api, { info: { title: "t", version: "1" } });
+  const bodyOf = (op: OpenAPIV3_1.OperationObject) =>
+    (op.requestBody as OpenAPIV3_1.RequestBodyObject).content["application/json"]!.schema as Record<
+      string,
+      any
+    >;
+
+  test("discriminated PATCH: a changed variant is inlined with defaults dropped and clearables nullable", () => {
+    const [email] = bodyOf(spec.paths!["/t"]!.patch!).oneOf;
+    expect(email.$ref).toBeUndefined();
+    expect(email.properties.digest).toEqual({ type: "boolean" });
+    expect(email.properties.signature).toEqual({
+      anyOf: [{ type: "string" }, { type: "null" }],
+      "x-clearable": true,
+    });
+  });
+
+  test("an unchanged variant keeps its $ref and mapping entry", () => {
+    const body = bodyOf(spec.paths!["/t"]!.patch!);
+    expect(body.oneOf[1]).toEqual({ $ref: "#/components/schemas/Sms" });
+    expect(body.discriminator.mapping).toEqual({ sms: "#/components/schemas/Sms" });
+  });
+
+  test("discriminated POST: clearables nullable, defaults kept", () => {
+    const [email] = bodyOf(spec.paths!["/t"]!.post!).oneOf;
+    expect(email.properties.digest.default).toBe(true);
+    expect(email.properties.signature.anyOf).toContainEqual({ type: "null" });
+  });
+
+  test("untagged PATCH: defaults dropped, clearables not widened", () => {
+    const [email, sms] = bodyOf(spec.paths!["/u"]!.patch!).anyOf;
+    expect(email.properties.digest).toEqual({ type: "boolean" });
+    expect(email.properties.signature).toEqual({ type: "string", "x-clearable": true });
+    expect(sms).toEqual({ $ref: "#/components/schemas/Sms" });
+  });
+
+  test("the shared components stay as declared", () => {
+    const Email = spec.components!.schemas!.Email as Record<string, any>;
+    expect(Email.properties.digest.default).toBe(true);
+    expect(Email.properties.signature).toEqual({ type: "string", "x-clearable": true });
+  });
+});

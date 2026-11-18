@@ -1,9 +1,10 @@
 import type { OpenAPIV3_1 } from "openapi-types";
 import type { Api, Endpoint, ErrorMap } from "../contract";
 import { HANDSHAKE_ERROR_KIND, joinPath } from "../contract";
-import type { TSchema } from "typebox";
+import { IsUnion, type TSchema } from "typebox";
 import { Memory } from "typebox/system";
 import { AdmitsNull, IsClearable } from "../typebox/clearable";
+import { IsDiscriminatedUnion } from "../typebox/discriminated-union";
 import { closeProperties } from "../utils/close-properties";
 import { SchemaRegistry } from "./schema";
 import type { Schema } from "./schema";
@@ -202,25 +203,27 @@ function buildTagIndex(api: Api<any, any>): {
   };
 }
 
+interface FieldRules {
+  /** Drop `default` from each field (PATCH: the server doesn't fill an absent field). */
+  dropDefaults: boolean;
+  /** Widen each `Clearable` field to `anyOf [S, null]` (the server converts its `null`). */
+  widenClearable: boolean;
+}
+
 /**
- * A request body schema as `parseBody` accepts it: closed, and with every top-level
- * `Clearable` property that doesn't already admit `null` widened to `anyOf [S, null]`.
- * Under PATCH, top-level properties also lose `default`, since the server doesn't fill an
- * absent key in a patch. Only the top level, because that's all the server treats this way.
- *
- * Such a body no longer matches the same schema used as a response, so its root sheds
- * `$id` rather than racing a response for one component. A property that loses its
- * `default` sheds `$id` for the same reason.
+ * Applies {@link FieldRules} to an object schema's top-level properties. Returns the same
+ * reference when nothing changes, so an untouched schema keeps its `$id` and still becomes
+ * a `$ref` to the shared component. A changed schema no longer matches the same schema used
+ * as a response, so it sheds `$id` (and is inlined) rather than racing it for one component.
  */
-function requestBodySchema(body: TSchema, method: Endpoint["method"]): TSchema {
-  const closed = closeProperties(body, { dropSharedIds: true });
-  const properties = (closed as { properties?: Record<string, TSchema> }).properties;
-  if (!properties) return closed;
+function rewriteFields(schema: TSchema, rules: FieldRules): TSchema {
+  const properties = (schema as { properties?: Record<string, TSchema> }).properties;
+  if (!properties) return schema;
   let rewritten: Record<string, unknown> | undefined;
   for (const [key, original] of Object.entries(properties)) {
     let prop: TSchema = original;
-    if (method === "PATCH" && "default" in prop) prop = Memory.Discard(prop, ["default", "$id"]);
-    if (IsClearable(prop) && !AdmitsNull(prop)) {
+    if (rules.dropDefaults && "default" in prop) prop = Memory.Discard(prop, ["default", "$id"]);
+    if (rules.widenClearable && IsClearable(prop) && !AdmitsNull(prop)) {
       prop = {
         anyOf: [Memory.Discard(prop, ["x-clearable"]), { type: "null" }],
         "x-clearable": true,
@@ -230,8 +233,46 @@ function requestBodySchema(body: TSchema, method: Endpoint["method"]): TSchema {
     rewritten ??= { ...properties };
     rewritten[key] = prop;
   }
-  if (!rewritten) return closed;
-  return Memory.Update(Memory.Discard(closed, ["$id"]), {}, { properties: rewritten });
+  if (!rewritten) return schema;
+  return Memory.Update(Memory.Discard(schema, ["$id"]), {}, { properties: rewritten });
+}
+
+/** Applies `rewrite` to each member of a union, keeping the union itself when none change. */
+function rewriteMembers(union: TSchema, rewrite: (member: TSchema) => TSchema): TSchema {
+  const members = (union as { anyOf: TSchema[] }).anyOf;
+  const mapped = members.map(rewrite);
+  if (mapped.every((member, index) => member === members[index])) return union;
+  return Memory.Update(Memory.Discard(union, ["$id"]), {}, { anyOf: mapped });
+}
+
+/**
+ * Every object member of an untagged union with its fields' defaults dropped, recursing into
+ * nested unions. Mirrors the server, which applies no top-level defaults to such a PATCH body.
+ */
+function dropMemberDefaults(schema: TSchema): TSchema {
+  if (IsUnion(schema)) return rewriteMembers(schema, dropMemberDefaults);
+  return rewriteFields(schema, { dropDefaults: true, widenClearable: false });
+}
+
+/**
+ * A request body schema as `parseBody` treats it: closed, then with the field rules the
+ * server applies to its top level (see `parseBody`):
+ *
+ * - an object body: clearable fields widened; under PATCH, defaults dropped;
+ * - a discriminated union: the same, per variant, since the server reads the tagged one;
+ * - any other union: under PATCH, defaults dropped from each member's fields. Clearable
+ *   fields aren't widened, because the server can't convert their `null` without a tag.
+ *
+ * Only what actually changes sheds its `$id`, so unchanged variants stay shared `$ref`s.
+ */
+function requestBodySchema(body: TSchema, method: Endpoint["method"]): TSchema {
+  const closed = closeProperties(body, { dropSharedIds: true });
+  const rules = { dropDefaults: method === "PATCH", widenClearable: true };
+  if (IsDiscriminatedUnion(closed)) {
+    return rewriteMembers(closed, (variant) => rewriteFields(variant, rules));
+  }
+  if (IsUnion(closed)) return method === "PATCH" ? dropMemberDefaults(closed) : closed;
+  return rewriteFields(closed, rules);
 }
 
 function buildOperation(
