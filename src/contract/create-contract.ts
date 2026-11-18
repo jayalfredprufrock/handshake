@@ -2,6 +2,7 @@ import type { Static, TComposite, TSchema } from "typebox";
 import * as T from "typebox";
 import { ApiError } from "./api-error";
 import type { ValidationIssue } from "./api-error";
+import type { StaticClearable } from "../typebox/clearable";
 
 /**
  * The static type of a TypeBox schema, or `undefined` when `S` isn't a schema (an
@@ -9,6 +10,17 @@ import type { ValidationIssue } from "./api-error";
  * `any`, so loosely-typed `Api<any, any>` code keeps working.
  */
 export type InferSchema<S> = 0 extends 1 & S ? any : S extends TSchema ? Static<S> : undefined;
+
+/**
+ * A request body as a client sends it: like {@link InferSchema}, but a `Clearable`
+ * property also accepts `null`, which tells the server to clear it. Handlers see the
+ * plain `Static` (see `BaseHandlerInput`), because the server converts the `null` first.
+ */
+export type InferBody<S> = 0 extends 1 & S
+  ? any
+  : S extends TSchema
+    ? StaticClearable<S>
+    : undefined;
 
 export interface EndpointMeta extends Record<string, any> {}
 
@@ -457,7 +469,8 @@ export interface HasEndpoints {
 
 export type ContractSchema<C extends HasEndpoints> = {
   [E in keyof C["endpoints"]]: {
-    body: InferSchema<C["endpoints"][E]["body"]>;
+    /** What a caller may send: clearable properties also accept `null`. */
+    body: InferBody<C["endpoints"][E]["body"]>;
     response: InferSchema<C["endpoints"][E]["response"]>;
     params: InferSchema<C["endpoints"][E]["params"]>;
     query: InferSchema<C["endpoints"][E]["query"]>;
@@ -465,8 +478,9 @@ export type ContractSchema<C extends HasEndpoints> = {
   };
 };
 
+/** Each endpoint's request body as a caller may send it (see {@link InferBody}). */
 export type ContractBody<C extends HasEndpoints> = {
-  [E in keyof C["endpoints"]]: InferSchema<C["endpoints"][E]["body"]>;
+  [E in keyof C["endpoints"]]: InferBody<C["endpoints"][E]["body"]>;
 };
 
 export type ContractResponse<C extends HasEndpoints> = {

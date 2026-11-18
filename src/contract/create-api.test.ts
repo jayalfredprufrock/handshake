@@ -3,7 +3,7 @@ import * as T from "typebox";
 import type { Static } from "typebox";
 import type { StaticApi, StaticEndpoint } from "../client";
 import type { BaseHandlerInput } from "../server";
-import type { TopKeyOf } from "../typebox";
+import { Clearable, type TopKeyOf } from "../typebox";
 import { createApi } from "./create-api";
 import type { Api, ApiBody, ApiHeaders, ApiSchema } from "./create-api";
 import { createContract } from "./create-contract";
@@ -161,5 +161,44 @@ describe("type helpers", () => {
       T.Object({ id: T.String(), other: T.Number(), "a.b": T.String() }),
     ]);
     expectTypeOf<TopKeyOf<typeof Schema>>().toEqualTypeOf<"id" | "nested" | "other">();
+  });
+});
+
+describe("ApiSchema bodies are what a caller may send", () => {
+  const Org = T.Object({
+    name: T.String(),
+    logoUrl: Clearable(T.String()),
+    note: T.Optional(T.String()),
+  });
+  const Plain = T.Object({ name: T.String(), note: T.Optional(T.String()) });
+  const api = createApi({
+    orgs: createContract("/orgs", {
+      updateOrg: { method: "PATCH", path: "/", body: T.Partial(Org), response: Org },
+      createOrg: { method: "POST", path: "/", body: Org, response: Org },
+      renameOrg: { method: "POST", path: "/rename", body: Plain, response: Org },
+    }),
+  });
+  type Schema = ApiSchema<typeof api>;
+
+  test("a clearable property accepts null; plain optional and required ones don't", () => {
+    expectTypeOf<Schema["createOrg"]["body"]>().toEqualTypeOf<{
+      name: string;
+      logoUrl?: string | null;
+      note?: string;
+    }>();
+    expectTypeOf<Schema["updateOrg"]["body"]>().toEqualTypeOf<{
+      name?: string;
+      logoUrl?: string | null;
+      note?: string;
+    }>();
+    expectTypeOf<ApiBody<typeof api>["updateOrg"]>().toEqualTypeOf<Schema["updateOrg"]["body"]>();
+  });
+
+  test("a body with no clearable fields is exactly Static<body>", () => {
+    expectTypeOf<Schema["renameOrg"]["body"]>().toEqualTypeOf<Static<typeof Plain>>();
+  });
+
+  test("responses stay the plain Static", () => {
+    expectTypeOf<Schema["updateOrg"]["response"]>().toEqualTypeOf<Static<typeof Org>>();
   });
 });
