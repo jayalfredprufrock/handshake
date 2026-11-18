@@ -160,16 +160,41 @@ function convertClearedNulls(schema: TSchema, value: unknown, method?: Endpoint[
 }
 
 /**
+ * `Default` for a PATCH body. A patch is shallow and an absent top-level key means "leave
+ * alone", so defaults are applied only within the top-level values that are present (a
+ * nested object replaced wholesale still gets its defaults). Filling an absent key would
+ * overwrite stored data with the default on every patch that omits it.
+ *
+ * A body without top-level `properties` (a union, an array, a scalar) has no keys to leave
+ * alone, so it's defaulted as a whole.
+ */
+function defaultPatch(schema: TSchema, raw: unknown): unknown {
+  const properties = (schema as { properties?: Record<string, TSchema> }).properties;
+  if (!properties || typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+    return T.Default(schema, raw);
+  }
+  const record = raw as Record<string, unknown>;
+  for (const key of Object.keys(record)) {
+    const prop = properties[key];
+    if (prop) record[key] = T.Default(prop, record[key]);
+  }
+  return record;
+}
+
+/**
  * Parses and validates a request body against a schema.
  * Rejects missing properties, and extra ones unless the schema opts out via its own
  * `additionalProperties`. No coercion is performed, apart from turning a `null` sent for a
  * {@link Clearable} property into "remove" (PATCH) or "absent" (other methods).
  *
+ * Under PATCH, defaults fill only the top-level values that are present: an absent key
+ * means "leave alone" (see {@link defaultPatch}).
+ *
  * Clearing runs after `Default`, so a default can't refill a field being cleared. Without a
  * `method`, a cleared field is treated as on a create: the key is dropped.
  */
 export function parseBody(schema: TSchema, raw: unknown, method?: Endpoint["method"]): unknown {
-  const value = T.Default(schema, raw);
+  const value = method === "PATCH" ? defaultPatch(schema, raw) : T.Default(schema, raw);
   convertClearedNulls(schema, value, method);
   T.Assert(closeProperties(schema), value);
   return value;

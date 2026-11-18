@@ -101,6 +101,35 @@ describe("normalizeIssues", () => {
 });
 
 describe("parseBody", () => {
+  describe("PATCH defaults", () => {
+    const Settings = Type.Object({
+      name: Type.String(),
+      theme: Type.String({ default: "light" }),
+      prefs: Type.Object({ lang: Type.String({ default: "en" }), tz: Type.String() }),
+    });
+    const Patch = Type.Partial(Settings);
+
+    test("an absent top-level key stays absent", () => {
+      const body = parseBody(Patch, { name: "x" }, "PATCH");
+      expect(body).toEqual({ name: "x" });
+      expect(body).not.toHaveProperty("theme");
+    });
+
+    test("a present nested object still gets its defaults", () => {
+      expect(parseBody(Patch, { prefs: { tz: "UTC" } }, "PATCH")).toEqual({
+        prefs: { lang: "en", tz: "UTC" },
+      });
+    });
+
+    test("other methods still fill absent keys", () => {
+      expect(parseBody(Patch, { name: "x" }, "POST")).toEqual({ name: "x", theme: "light" });
+    });
+
+    test("a missing required key is still rejected", () => {
+      expect(() => parseBody(Settings, { name: "x", prefs: { tz: "UTC" } }, "PATCH")).toThrow();
+    });
+  });
+
   describe("clearable properties", () => {
     const Org = Type.Object({
       name: Type.String(),
@@ -140,7 +169,7 @@ describe("parseBody", () => {
     });
 
     test("a nullable field keeps null as a value", () => {
-      expect(parseBody(Patch, { tagline: null }, "PATCH")).toMatchObject({ tagline: null });
+      expect(parseBody(Patch, { tagline: null }, "PATCH")).toEqual({ tagline: null });
       expect(parseBody(Org, { name: "a", tagline: null }, "POST")).toMatchObject({
         name: "a",
         tagline: null,

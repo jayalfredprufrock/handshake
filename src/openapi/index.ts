@@ -205,26 +205,33 @@ function buildTagIndex(api: Api<any, any>): {
 /**
  * A request body schema as `parseBody` accepts it: closed, and with every top-level
  * `Clearable` property that doesn't already admit `null` widened to `anyOf [S, null]`.
- * Only the top level, because that's all the server converts.
+ * Under PATCH, top-level properties also lose `default`, since the server doesn't fill an
+ * absent key in a patch. Only the top level, because that's all the server treats this way.
  *
- * Such a body no longer matches the same schema used as a response (where storage never
- * holds `null`), so its root sheds `$id` rather than racing a response for one component.
+ * Such a body no longer matches the same schema used as a response, so its root sheds
+ * `$id` rather than racing a response for one component. A property that loses its
+ * `default` sheds `$id` for the same reason.
  */
-function requestBodySchema(body: TSchema): TSchema {
+function requestBodySchema(body: TSchema, method: Endpoint["method"]): TSchema {
   const closed = closeProperties(body, { dropSharedIds: true });
   const properties = (closed as { properties?: Record<string, TSchema> }).properties;
   if (!properties) return closed;
-  let widened: Record<string, unknown> | undefined;
-  for (const [key, prop] of Object.entries(properties)) {
-    if (!IsClearable(prop) || AdmitsNull(prop)) continue;
-    widened ??= { ...properties };
-    widened[key] = {
-      anyOf: [Memory.Discard(prop, ["x-clearable"]), { type: "null" }],
-      "x-clearable": true,
-    };
+  let rewritten: Record<string, unknown> | undefined;
+  for (const [key, original] of Object.entries(properties)) {
+    let prop: TSchema = original;
+    if (method === "PATCH" && "default" in prop) prop = Memory.Discard(prop, ["default", "$id"]);
+    if (IsClearable(prop) && !AdmitsNull(prop)) {
+      prop = {
+        anyOf: [Memory.Discard(prop, ["x-clearable"]), { type: "null" }],
+        "x-clearable": true,
+      } as never;
+    }
+    if (prop === original) continue;
+    rewritten ??= { ...properties };
+    rewritten[key] = prop;
   }
-  if (!widened) return closed;
-  return Memory.Update(Memory.Discard(closed, ["$id"]), {}, { properties: widened });
+  if (!rewritten) return closed;
+  return Memory.Update(Memory.Discard(closed, ["$id"]), {}, { properties: rewritten });
 }
 
 function buildOperation(
@@ -274,7 +281,7 @@ function buildOperation(
             // the `null` it accepts for clearable properties.
             content: {
               "application/json": {
-                schema: registry.convert(requestBodySchema(endpoint.body)),
+                schema: registry.convert(requestBodySchema(endpoint.body, endpoint.method)),
               },
             },
           },

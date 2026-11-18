@@ -431,3 +431,34 @@ describe("clearable properties", () => {
     });
   });
 });
+
+describe("PATCH body defaults", () => {
+  const Settings = T.Object(
+    { theme: T.String({ default: "light" }), size: T.Number({ default: 1 }) },
+    { $id: "Settings" },
+  );
+  const api = createApi("/", {
+    settings: createContract("/", {
+      create: { method: "POST", path: "/s", body: Settings, response: Settings },
+      update: { method: "PATCH", path: "/s", body: T.Partial(Settings), response: Settings },
+    }),
+  });
+  const spec = generateOpenApi(api, { info: { title: "t", version: "1" } });
+  const bodyOf = (op: OpenAPIV3_1.OperationObject) =>
+    (op.requestBody as OpenAPIV3_1.RequestBodyObject).content["application/json"]!.schema as Record<
+      string,
+      any
+    >;
+
+  test("top-level PATCH body properties don't advertise a default", () => {
+    const body = bodyOf(spec.paths!["/s"]!.patch!);
+    expect(body.properties.theme).toEqual({ type: "string" });
+    expect(body.properties.size).toEqual({ type: "number" });
+  });
+
+  test("other methods and the shared component keep their defaults", () => {
+    expect(bodyOf(spec.paths!["/s"]!.post!)).toEqual({ $ref: "#/components/schemas/Settings" });
+    const Settings = spec.components!.schemas!.Settings as Record<string, any>;
+    expect(Settings.properties.theme.default).toBe("light");
+  });
+});
