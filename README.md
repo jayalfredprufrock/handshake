@@ -402,9 +402,26 @@ DiscriminatedUnion("knd", [Cat, Dog]); // ✗ type error
 It's a plain TypeBox union with an extra `discriminator: { propertyName }` annotation, which handshake uses in two places:
 
 - **Faster responses.** When an endpoint's `response` is a discriminated union, the server reads the tag and cleans/validates against just that variant, instead of trying every variant in turn. Validation errors also point at the field that failed inside that variant. A missing or unknown tag falls back to the full union. This applies to the top-level response schema only; unions nested deeper are still checked variant by variant.
+- **Request bodies.** For a body that's a discriminated union, PATCH defaults and `Clearable` (below) apply to the fields of the variant its tag names.
 - **Better OpenAPI.** The union is emitted as `oneOf` with a `discriminator`. Variants that declare a `$id` (as above) become named components and get a `mapping` entry (`cat → #/components/schemas/Cat`), which code generators use to produce proper `Cat`/`Dog` types. Inline variants still appear in `oneOf`, but can't be mapped.
 
 `IsDiscriminatedUnion(schema)` and the `TDiscriminatedUnion<D, Types>` type are exported too, for tools that want to treat these unions specially.
+
+### Clearable fields and PATCH bodies
+
+JSON has no `undefined`, so a client can't say "remove this optional field" by leaving it out. Mark the property `Clearable` and the client may send `null` instead:
+
+```ts
+import { Clearable } from "@jayalfredprufrock/handshake/typebox";
+
+const Org = Type.Object({ name: Type.String(), logoUrl: Clearable(Type.String()) });
+// client:  api.updateOrg({ id }, { logoUrl: null })
+// handler: body is { logoUrl: undefined } — a present key, meaning "remove"
+```
+
+Before validation the server converts a `null` sent for a top-level clearable property: under PATCH into a present `undefined` key, under other methods by dropping the key so server-side defaults apply. Client body types accept `null` for these properties, handler types don't, and OpenAPI marks them nullable in request bodies. A `null` on any other optional property is still rejected, and a schema that admits `null` itself keeps it as a value.
+
+A PATCH body that's an object is treated as a set of fields, where an absent field means "leave unchanged". So under PATCH, schema `default`s are not filled in for absent top-level fields (which would overwrite stored data); they still apply inside any value the patch does send, since that value replaces the stored one whole. Array and scalar PATCH bodies are defaulted as a whole. A union body without a `DiscriminatedUnion` tag gets **no** top-level defaults under PATCH, since the variant isn't known before validation.
 
 ## CRUD contracts
 

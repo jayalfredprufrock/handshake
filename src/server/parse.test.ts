@@ -130,6 +130,72 @@ describe("parseBody", () => {
     });
   });
 
+  describe("union bodies", () => {
+    const Email = Type.Object({
+      kind: Type.Literal("email"),
+      address: Type.String(),
+      digest: Type.Optional(Type.Boolean({ default: true })),
+      signature: Clearable(Type.String()),
+    });
+    const Sms = Type.Object({
+      kind: Type.Literal("sms"),
+      number: Type.String(),
+      quietHours: Type.Optional(Type.Boolean({ default: false })),
+      prefs: Type.Optional(Type.Object({ lang: Type.String({ default: "en" }) })),
+    });
+    const Tagged = DiscriminatedUnion("kind", [Email, Sms]);
+    const Untagged = Type.Union([Email, Sms]);
+
+    test("discriminated PATCH: absent fields of the tagged variant stay absent", () => {
+      expect(parseBody(Tagged, { kind: "email", address: "a@b" }, "PATCH")).toEqual({
+        kind: "email",
+        address: "a@b",
+      });
+    });
+
+    test("discriminated PATCH: present values still get their defaults", () => {
+      expect(parseBody(Tagged, { kind: "sms", number: "1", prefs: {} }, "PATCH")).toEqual({
+        kind: "sms",
+        number: "1",
+        prefs: { lang: "en" },
+      });
+    });
+
+    test("discriminated PATCH: null on a clearable field becomes a present undefined key", () => {
+      const body = parseBody(
+        Tagged,
+        { kind: "email", address: "a@b", signature: null },
+        "PATCH",
+      ) as Record<string, unknown>;
+      expect("signature" in body).toBe(true);
+      expect(body.signature).toBeUndefined();
+    });
+
+    test("discriminated POST: null on a clearable field drops the key, defaults still fill", () => {
+      expect(parseBody(Tagged, { kind: "email", address: "a@b", signature: null }, "POST")).toEqual(
+        { kind: "email", address: "a@b", digest: true },
+      );
+    });
+
+    test("untagged PATCH: no top-level defaults", () => {
+      expect(parseBody(Untagged, { kind: "sms", number: "1" }, "PATCH")).toEqual({
+        kind: "sms",
+        number: "1",
+      });
+    });
+
+    test("untagged POST: defaults still apply", () => {
+      expect(parseBody(Untagged, { kind: "sms", number: "1" }, "POST")).toMatchObject({
+        quietHours: false,
+      });
+    });
+
+    test("array and scalar PATCH bodies are defaulted whole", () => {
+      const Items = Type.Array(Type.Object({ n: Type.Number({ default: 1 }) }));
+      expect(parseBody(Items, [{}], "PATCH")).toEqual([{ n: 1 }]);
+    });
+  });
+
   describe("clearable properties", () => {
     const Org = Type.Object({
       name: Type.String(),

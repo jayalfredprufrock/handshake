@@ -1,4 +1,4 @@
-import type { TSchema } from "typebox";
+import { IsUnion, type TSchema } from "typebox";
 import * as T from "typebox/value";
 import type { Endpoint, ValidationIssue } from "../contract";
 import { AdmitsNull, IsClearable } from "../typebox/clearable";
@@ -160,15 +160,21 @@ function convertClearedNulls(schema: TSchema, value: unknown, method?: Endpoint[
 }
 
 /**
- * `Default` for a PATCH body. A patch is shallow and an absent top-level key means "leave
- * alone", so defaults are applied only within the top-level values that are present (a
- * nested object replaced wholesale still gets its defaults). Filling an absent key would
+ * `Default` for a PATCH body, given the variant chosen by {@link selectVariant}.
+ *
+ * An object body is a set of fields, and an absent field means "leave alone", so defaults
+ * apply only within the top-level values that are present: each of those replaces the
+ * stored value whole, so its own defaults still belong. Filling an absent key would
  * overwrite stored data with the default on every patch that omits it.
  *
- * A body without top-level `properties` (a union, an array, a scalar) has no keys to leave
- * alone, so it's defaulted as a whole.
+ * - A discriminated union arrives here already narrowed to its tagged variant.
+ * - Any other union (or a discriminated one with a missing or unknown tag) gets NO
+ *   top-level defaults: there's no reliable way to know which variant's apply before
+ *   validation. The worst case is a missing default, never an overwritten stored value.
+ * - An array or scalar body replaces the whole value, so it's defaulted as a whole.
  */
 function defaultPatch(schema: TSchema, raw: unknown): unknown {
+  if (IsUnion(schema)) return raw;
   const properties = (schema as { properties?: Record<string, TSchema> }).properties;
   if (!properties || typeof raw !== "object" || raw === null || Array.isArray(raw)) {
     return T.Default(schema, raw);
@@ -188,14 +194,20 @@ function defaultPatch(schema: TSchema, raw: unknown): unknown {
  * {@link Clearable} property into "remove" (PATCH) or "absent" (other methods).
  *
  * Under PATCH, defaults fill only the top-level values that are present: an absent key
- * means "leave alone" (see {@link defaultPatch}).
+ * means "leave alone". A union body without a usable discriminator gets no top-level
+ * defaults under PATCH (see {@link defaultPatch}). For a {@link DiscriminatedUnion} body,
+ * both rules apply to the variant named by its tag.
  *
  * Clearing runs after `Default`, so a default can't refill a field being cleared. Without a
  * `method`, a cleared field is treated as on a create: the key is dropped.
  */
 export function parseBody(schema: TSchema, raw: unknown, method?: Endpoint["method"]): unknown {
-  const value = method === "PATCH" ? defaultPatch(schema, raw) : T.Default(schema, raw);
-  convertClearedNulls(schema, value, method);
+  // A discriminated union's fields are its tagged variant's, so defaults and clearing read
+  // that variant. (TypeBox's own union `Default` only fills a variant whose result passes
+  // `Check`, which a not-yet-converted `null` fails.) Validation still uses the full schema.
+  const variant = selectVariant(schema, raw);
+  const value = method === "PATCH" ? defaultPatch(variant, raw) : T.Default(variant, raw);
+  convertClearedNulls(variant, value, method);
   T.Assert(closeProperties(schema), value);
   return value;
 }
@@ -214,10 +226,13 @@ export class ResponseValidationError extends Error {
 
 /**
  * For a top-level {@link DiscriminatedUnion}, returns the one variant whose tag literal
- * matches `raw`, so `Clean` and `Assert` skip TypeBox's try-every-variant loop. Anything
- * else (no annotation, missing or unknown tag, non-object value) returns `schema`
- * unchanged, so errors match the full-union path. Selection happens on the already-closed
- * union, so the chosen variant is force-closed too.
+ * matches `raw`. Anything else (no annotation, missing or unknown tag, non-object value)
+ * returns `schema` unchanged.
+ *
+ * Responses use it so `Clean` and `Assert` skip TypeBox's try-every-variant loop; errors
+ * still match the full-union path, and selecting on the already-closed union means the
+ * chosen variant is force-closed too. Request bodies use it to find the fields that PATCH
+ * defaults and clearing apply to.
  */
 function selectVariant(schema: TSchema, raw: unknown): TSchema {
   if (!IsDiscriminatedUnion(schema) || typeof raw !== "object" || raw === null) return schema;
